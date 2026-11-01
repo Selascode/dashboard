@@ -18,14 +18,14 @@
 
 ### Jalon J0 — Fondations (1 semaine)
 **Objectif de sortie :** Une appli vide qui se lance sur Windows, macOS et Ubuntu, tests verts.
-- [ ] Initialisation du dépôt Git + structure multi-agents (`.agents/`)
-- [ ] Socle Tauri 2 (Rust) + React / TypeScript + Tailwind CSS + `cmdk`
-- [ ] Base SQLite unique dans le dossier de données de l'appli + système de migrations numérotées avec sauvegarde préalable
-- [ ] Champs de synchronisation sur toutes les entités synchronisables (`id` UUID, `created_at`, `updated_at`, `deleted_at`, `device_id`)
-- [ ] Purge automatique au démarrage des éléments supprimés logiquement depuis > 30 jours
-- [ ] Navigation latérale fixe (`Dashboard`, `Tâches`, `Agenda`, `Réglages` + zone `Mail` masquée)
-- [ ] Gestion des thèmes Clair / Sombre / Système (`Setting`)
-- [ ] Pipeline CI GitHub Actions compilant et testant sur Ubuntu 22.04+, Windows 10/11 et macOS 12+ (`CMP-1`, `QLT-2`)
+- [x] Initialisation du dépôt Git + structure multi-agents (`.agents/`) (`j0-foundations/prv-1-qlt-2-socle-initial`)
+- [x] Socle Tauri 2 (Rust) + React / TypeScript + Tailwind CSS + `cmdk` (`j0-foundations/prv-1-qlt-2-socle-initial`)
+- [x] Base SQLite unique dans le dossier de données de l'appli + système de migrations numérotées avec sauvegarde préalable (`j0-foundations/prv-1-qlt-2-socle-initial`)
+- [x] Champs de synchronisation sur toutes les entités synchronisables (`id` UUID, `created_at`, `updated_at`, `deleted_at`, `device_id`) (`j0-foundations/prv-1-qlt-2-socle-initial`)
+- [x] Purge automatique au démarrage des éléments supprimés logiquement depuis > 30 jours (`j0-foundations/prv-1-qlt-2-socle-initial`)
+- [x] Navigation latérale fixe (`Dashboard`, `Tâches`, `Agenda`, `Réglages` + zone `Mail` masquée) (`j0-foundations/prv-1-qlt-2-socle-initial`)
+- [x] Gestion des thèmes Clair / Sombre / Système (`Setting`) (`j0-foundations/prv-1-qlt-2-socle-initial`)
+- [x] Pipeline CI GitHub Actions compilant et testant sur Ubuntu 22.04+, Windows 10/11 et macOS 12+ (`CMP-1`, `QLT-2`) (`j0-foundations/prv-1-qlt-2-socle-initial`)
 
 ### Jalon J1 — Cœur des Tâches & Saisie Rapide (2 semaines)
 **Objectif de sortie :** Une tâche catégorisée se crée en moins de 5 secondes.

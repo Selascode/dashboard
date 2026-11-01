@@ -1,5 +1,4 @@
 {
-  "$schema": "https://antigravity.google/schemas/hooks-v1.json",
   "hooks": [
     {
       "name": "typescript-domain-and-ui-check",
