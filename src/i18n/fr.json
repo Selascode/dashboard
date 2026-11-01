@@ -1,0 +1,92 @@
+{
+  "app": {
+    "title": "Dashboard de Productivité",
+    "subtitle": "Que dois-je faire aujourd'hui ?",
+    "skipToContent": "Aller au contenu principal",
+    "keyboardHint": "Navigation 100 % clavier activée"
+  },
+  "nav": {
+    "sidebarLabel": "Navigation principale",
+    "dashboard": "Dashboard",
+    "tasks": "Tâches",
+    "agenda": "Agenda",
+    "settings": "Paramètres",
+    "mailReserved": "Mail (plus tard)",
+    "shortcuts": {
+      "dashboard": "Ctrl+1",
+      "tasks": "Ctrl+2",
+      "agenda": "Ctrl+3",
+      "settings": "Menu"
+    }
+  },
+  "dashboard": {
+    "heading": "Vue d'ensemble du jour",
+    "description": "Disposition fixe à 4 zones — clarté immédiate sans configuration obligatoire.",
+    "focusZone": {
+      "title": "Focus 5 : la boussole du jour",
+      "badge": "Priorité absolue",
+      "progress": "0 / 5 terminées",
+      "emptyTitle": "Aucune priorité sélectionnée pour aujourd'hui",
+      "emptyDescription": "Choisissez jusqu'à 5 tâches clés pour garder le cap toute la journée.",
+      "composeButton": "Composer mon Focus",
+      "nowModeButton": "Mode Maintenant"
+    },
+    "agendaZone": {
+      "title": "Agenda du jour",
+      "subtitle": "Lecture seule (ICS)",
+      "empty": "Aucun événement prévu aujourd'hui."
+    },
+    "deadlinesZone": {
+      "title": "Prochaines échéances",
+      "subtitle": "Tâches à venir et retards",
+      "empty": "Aucune échéance imminente ou en retard."
+    },
+    "ShortcutsZone": {
+      "title": "Raccourcis épinglés",
+      "subtitle": "Outils connectés favoris",
+      "empty": "Aucun raccourci épinglé pour le moment."
+    },
+    "mailZone": {
+      "title": "Mail (emplacement réservé V3)",
+      "description": "Zone réservée dans la mise en page fixe, masquée tant que le module mail n'est pas activé."
+    }
+  },
+  "tasks": {
+    "heading": "Tâches & Catégories",
+    "description": "Gérez vos tâches et visualisez vos 5 catégories par défaut.",
+    "viewList": "Vue liste",
+    "viewCategories": "Vue par catégories",
+    "defaultCategoriesTitle": "Catégories initialisées en base locale",
+    "systemBadge": "Système",
+    "emptyTasks": "Aucune tâche enregistrée. La saisie rapide (Ctrl+Maj+Espace) sera activée au jalon J1."
+  },
+  "agenda": {
+    "heading": "Agenda en lecture seule",
+    "description": "Consultez vos emplois du temps ICS en vue Semaine ou Mois.",
+    "viewWeek": "Semaine",
+    "viewMonth": "Mois",
+    "emptySources": "Aucune source ICS configurée. L'import de fichiers et d'URL ICS sera activé au jalon J3."
+  },
+  "settings": {
+    "heading": "Paramètres",
+    "description": "Personnalisez l'apparence et vérifiez l'état du socle local-first.",
+    "appearance": {
+      "title": "Apparence et lisibilité",
+      "description": "Choisissez le thème de l'interface. Le contraste respecte le niveau WCAG AA.",
+      "groupLabel": "Choix du thème de couleur",
+      "light": "Clair",
+      "lightHint": "Fond lumineux à fort contraste",
+      "dark": "Sombre",
+      "darkHint": "Confort visuel en basse lumière",
+      "system": "Système",
+      "systemHint": "Suit automatiquement votre système d'exploitation",
+      "activeTheme": "Thème appliqué :"
+    },
+    "storage": {
+      "title": "Socle de données local-first (SQLite)",
+      "schemaVersion": "Version du schéma",
+      "categoriesCount": "Catégories actives",
+      "syncReady": "Champs de synchronisation prêts (UUID, UTC ISO 8601, suppression logique, device_id)"
+    }
+  }
+}
