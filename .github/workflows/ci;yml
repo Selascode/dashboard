@@ -1,0 +1,124 @@
+name: CI — Multi-OS Verification (Tauri 2 + React + SQLite)
+
+on:
+  push:
+    branches:
+      - main
+      - "j*-**"
+      - "feat/**"
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ==========================================================================
+  # Job 1 : Audit Statique Vie Privée, Sécurité, Typage & Tests Unitaires TS
+  # ==========================================================================
+  frontend-and-privacy-audit:
+    name: "Frontend, Domain Tests & Privacy Guard"
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: "[PRV-2] Check zero external CDN references"
+        run: |
+          if grep -rnE '(fonts\.googleapis\.com|cdn\.jsdelivr\.net|unpkg\.com|cdnjs\.cloudflare\.com)' index.html src/; then
+            echo "ERREUR [PRV-2] : Référence CDN externe détectée. Toutes les ressources doivent être empaquetées."
+            exit 1
+          fi
+
+      - name: "[PRV-4 & LNC-4] Check zero shell execution in Tauri"
+        run: |
+          if grep -rnE 'tauri-plugin-shell|std::process::Command' src-tauri/src/ src-tauri/Cargo.toml; then
+            echo "ERREUR [PRV-4] : Exécution de commandes shell détectée et interdite dans le MVP."
+            exit 1
+          fi
+
+      - name: "[Section 6] Check zero direct SQL in React UI components"
+        run: |
+          if [ -d "src/components" ] && grep -rnE 'SELECT .* FROM|INSERT INTO|UPDATE .* SET|DELETE FROM' src/components/ src/pages/ 2>/dev/null; then
+            echo "ERREUR [Section 6] : Le code SQL ne doit jamais être appelé directement dans les composants UI."
+            exit 1
+          fi
+
+      - name: Run Linter & TypeScript Typecheck
+        run: |
+          npm run lint
+          npm run typecheck
+
+      - name: "[QLT-1] Run Domain & UI Unit Tests (50+ Quick Capture cases)"
+        run: npm run test -- --run
+
+  # ==========================================================================
+  # Job 2 : Compilation Rust / Tauri 2 & Tests SQLite sur les 3 OS [CMP-1, QLT-2]
+  # ==========================================================================
+  tauri-multi-os-matrix:
+    name: "Tauri 2 & SQLite (${{ matrix.os }})"
+    needs: frontend-and-privacy-audit
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - windows-latest
+          - macos-latest
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies (WebKitGTK & libsecret for Keychain [PRV-3])
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libsecret-1-dev \
+             xvfb
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Setup Rust Stable Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust Cargo build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: Build Frontend Bundle
+        run: npm run build
+
+      - name: "[QLT-1] Run Rust Unit & SQLite Migration Tests"
+        working-directory: ./src-tauri
+        run: cargo test --verbose
+
+      - name: "[QLT-2] Verify Full Tauri 2 Compilation (No Bundle)"
+        working-directory: ./src-tauri
+        run: cargo check --bins --tests

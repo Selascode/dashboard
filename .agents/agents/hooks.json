@@ -1,0 +1,49 @@
+{
+  "$schema": "https://antigravity.google/schemas/hooks-v1.json",
+  "hooks": [
+    {
+      "name": "typescript-domain-and-ui-check",
+      "description": "Vérifie le typage TS et lance les tests unitaires liés dès qu'un fichier TypeScript/React est modifié [QLT-1].",
+      "event": "afterFileEdit",
+      "filePattern": "src/**/*.{ts,tsx}",
+      "commands": [
+        "npx tsc --noEmit",
+        "npx vitest related --run --passWithNoTests"
+      ],
+      "onFailure": "returnErrorToAgent"
+    },
+    {
+      "name": "rust-tauri-check",
+      "description": "Vérifie la compilation du backend Rust Tauri 2 et des migrations SQLite sans bloquer le serveur de dev.",
+      "event": "afterFileEdit",
+      "filePattern": "src-tauri/**/*.{rs,sql,toml}",
+      "commands": [
+        "cargo check --manifest-path src-tauri/Cargo.toml"
+      ],
+      "onFailure": "returnErrorToAgent"
+    },
+    {
+      "name": "privacy-and-security-guard",
+      "description": "Bloque tout appel CDN externe [PRV-2], toute exécution shell [PRV-4] et tout SQL direct dans l'UI.",
+      "event": "beforeCommit",
+      "commands": [
+        "! grep -rnE '(fonts\\.googleapis\\.com|cdn\\.jsdelivr\\.net|unpkg\\.com|cdnjs\\.cloudflare\\.com)' index.html src/",
+        "! grep -rnE 'tauri-plugin-shell|Command::new' src-tauri/src/",
+        "! grep -rnE 'SELECT .* FROM|INSERT INTO|UPDATE .* SET|DELETE FROM' src/components/ src/pages/"
+      ],
+      "onFailure": "blockAndNotifyAgent"
+    },
+    {
+      "name": "pre-pr-full-validation",
+      "description": "Exécute la suite complète (linter, types, 50+ tests unitaires du parser, tests Rust) avant le push GitHub [QLT-1, QLT-2].",
+      "event": "beforePush",
+      "commands": [
+        "npm run lint",
+        "npm run typecheck",
+        "npm run test -- --run",
+        "cargo test --manifest-path src-tauri/Cargo.toml"
+      ],
+      "onFailure": "blockAndNotifyAgent"
+    }
+  ]
+}
