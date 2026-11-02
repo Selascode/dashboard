@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import App from '../App';
-import { getSettingValue, resetMemoryFallbackStore } from '../lib/db';
+import { getSettingValue, resetMemoryFallbackStore, seedDemoData } from '../lib/db';
 
 if (typeof globalThis.ResizeObserver === 'undefined') {
   globalThis.ResizeObserver = class ResizeObserver {
@@ -135,6 +135,65 @@ describe('Coque, Navigation Clavier, Palette cmdk & Thèmes (Lots A & B)', () =>
     fireEvent.click(screen.getByTestId('theme-option-system'));
     await waitFor(async () => {
       expect(await getSettingValue('theme', 'light')).toBe('system');
+    });
+  });
+
+  it('affiche les tâches démo dans le Dashboard et Tâches, filtre par catégorie, édite le détail et annule avec Ctrl+Z (LOT C : FOC-1..4, TSK-1..7, CAP-2, CMD-3)', async () => {
+    seedDemoData();
+    render(<App />);
+
+    // Le Dashboard affiche "Bonjour Selasi, votre journée, l’esprit léger." et la liste Focus 5 active
+    expect(await screen.findByTestId('dashboard-greeting-heading')).toHaveTextContent(
+      'Bonjour Selasi, votre journée, l’esprit léger.',
+    );
+    expect(await screen.findByTestId('focus5-task-list')).toBeInTheDocument();
+
+    // Navigation vers l'écran Tâches
+    fireEvent.click(screen.getByTestId('nav-tasks'));
+    expect(await screen.findByTestId('page-tasks')).toBeInTheDocument();
+
+    // Panneau de droite par défaut = rappel de syntaxe rapide et modèles (pas d'import d'image)
+    expect(screen.getByTestId('task-syntax-panel')).toBeInTheDocument();
+    expect(screen.queryByTestId('task-detail-panel')).not.toBeInTheDocument();
+
+    // Filtre par catégorie École
+    fireEvent.click(screen.getByTestId('category-card-ecole'));
+    expect(screen.getByTestId('task-row-demo-task-1')).toBeInTheDocument();
+    expect(screen.queryByTestId('task-row-demo-task-3')).not.toBeInTheDocument();
+
+    // Retour sur Toutes les catégories
+    fireEvent.click(screen.getByTestId('category-card-all'));
+    expect(screen.getByTestId('task-row-demo-task-3')).toBeInTheDocument();
+
+    // Bascule Vue Catégories (TSK-6) puis retour Vue Liste
+    fireEvent.click(screen.getByTestId('tasks-view-categories'));
+    expect(screen.getByTestId('tasks-categories-grid')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('tasks-view-list'));
+
+    // Saisie rapide avec aperçu en direct (#ecole @auj !3 ~45m *)
+    const quickInput = screen.getByTestId('tasks-quick-add-input');
+    fireEvent.change(quickInput, {
+      target: { value: 'Préparer oral architecture #ecole @auj !3 ~45m *' },
+    });
+    expect(screen.getByTestId('quick-syntax-live-preview')).toBeInTheDocument();
+    fireEvent.submit(quickInput.closest('form')!);
+
+    // La tâche créée est sélectionnée et ouvre le panneau de détail à droite
+    expect(await screen.findByTestId('task-detail-panel')).toBeInTheDocument();
+    expect(screen.getByTestId('detail-title-input')).toHaveValue(
+      'Préparer oral architecture',
+    );
+
+    // Fermeture du panneau de détail -> retour au panneau de syntaxe
+    fireEvent.click(screen.getByTestId('task-detail-close-btn'));
+    expect(await screen.findByTestId('task-syntax-panel')).toBeInTheDocument();
+
+    // Complétion d'une tâche puis annulation via Ctrl+Z (TSK-5)
+    fireEvent.click(screen.getByTestId('task-checkbox-demo-task-1'));
+    expect(await screen.findByTestId('undo-toast')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+    await waitFor(() => {
+      expect(screen.queryByTestId('undo-toast')).not.toBeInTheDocument();
     });
   });
 });

@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import demoSeedState from './demo-seed-state.json';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 
@@ -311,7 +312,233 @@ function loadBrowserStoreFromLocalStorage(): boolean {
   }
 }
 
+function applyDemoSeedSync(
+  onlyProfile = false,
+  customRefDate?: string,
+): void {
+  const now = '2026-11-02T08:00:00Z';
+  const refDate =
+    customRefDate || demoSeedState.referenceDate || '2026-11-02';
+  memorySettingsStore.set('user_name', {
+    key: 'user_name',
+    value_json: JSON.stringify(demoSeedState.userName || 'Selasi'),
+    updated_at: now,
+  });
+
+  if (onlyProfile) {
+    return;
+  }
+
+  const demoTasks: TaskRecord[] = [
+    {
+      id: 'demo-task-1',
+      title: 'Réviser le chapitre de statistiques',
+      notes: 'Chapitre 4',
+      category_id: 'cat-ecole',
+      status: 'todo',
+      priority: 3,
+      due_date: refDate,
+      has_due_time: false,
+      estimated_minutes: 45,
+      completed_at: null,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+      device_id: 'demo-device',
+    },
+    {
+      id: 'demo-task-2',
+      title: 'Finaliser les wireframes du portfolio',
+      notes: "Page d'accueil",
+      category_id: 'cat-projets',
+      status: 'todo',
+      priority: 3,
+      due_date: refDate,
+      has_due_time: false,
+      estimated_minutes: 60,
+      completed_at: null,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+      device_id: 'demo-device',
+    },
+    {
+      id: 'demo-task-3',
+      title: 'Faire une sortie de 5 km',
+      notes: "Prendre l'air",
+      category_id: 'cat-sport',
+      status: 'todo',
+      priority: 2,
+      due_date: refDate,
+      has_due_time: false,
+      estimated_minutes: 30,
+      completed_at: null,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+      device_id: 'demo-device',
+    },
+    {
+      id: 'demo-task-4',
+      title: 'Appeler le dentiste',
+      notes: 'Prendre rendez-vous',
+      category_id: 'cat-perso',
+      status: 'todo',
+      priority: 1,
+      due_date: refDate,
+      has_due_time: false,
+      estimated_minutes: 10,
+      completed_at: null,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+      device_id: 'demo-device',
+    },
+    {
+      id: 'demo-task-5',
+      title: 'Envoyer le dossier de candidature',
+      notes: 'Relire la lettre et joindre le CV',
+      category_id: 'cat-ecole',
+      status: 'todo',
+      priority: 2,
+      due_date: '2026-11-04',
+      has_due_time: false,
+      estimated_minutes: null,
+      completed_at: null,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+      device_id: 'demo-device',
+    },
+    {
+      id: 'demo-task-6',
+      title: 'Préparer la présentation du projet',
+      notes: 'Rassembler les premières idées',
+      category_id: 'cat-projets',
+      status: 'todo',
+      priority: 2,
+      due_date: '2026-11-05',
+      has_due_time: false,
+      estimated_minutes: null,
+      completed_at: null,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+      device_id: 'demo-device',
+    },
+    {
+      id: 'demo-task-7',
+      title: 'Réserver les billets pour le week-end',
+      notes: 'Comparer les horaires de train',
+      category_id: 'cat-perso',
+      status: 'todo',
+      priority: 1,
+      due_date: '2026-11-06',
+      has_due_time: false,
+      estimated_minutes: null,
+      completed_at: null,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+      device_id: 'demo-device',
+    },
+    {
+      id: 'demo-task-8',
+      title: 'Trier mes notes et idées',
+      notes: 'Faire un peu de place dans mes idées',
+      category_id: 'cat-inbox',
+      status: 'todo',
+      priority: 0,
+      due_date: null,
+      has_due_time: false,
+      estimated_minutes: null,
+      completed_at: null,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+      device_id: 'demo-device',
+    },
+    {
+      id: 'demo-task-9',
+      title: 'Installer l’environnement de travail',
+      notes: 'Configuration initiale',
+      category_id: 'cat-projets',
+      status: 'done',
+      priority: 1,
+      due_date: refDate,
+      has_due_time: false,
+      estimated_minutes: null,
+      completed_at: now,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+      device_id: 'demo-device',
+    },
+    {
+      id: 'demo-task-10',
+      title: 'Organiser les dossiers du semestre',
+      notes: 'Cours et TD',
+      category_id: 'cat-ecole',
+      status: 'done',
+      priority: 1,
+      due_date: refDate,
+      has_due_time: false,
+      estimated_minutes: null,
+      completed_at: now,
+      created_at: now,
+      updated_at: now,
+      deleted_at: null,
+      device_id: 'demo-device',
+    },
+  ];
+
+  for (const t of demoTasks) {
+    memoryTasksStore.set(t.id, t);
+  }
+
+  memoryFocusStore.set('demo-focus-1', {
+    id: 'demo-focus-1',
+    focus_day: refDate,
+    task_id: 'demo-task-1',
+    position: 1,
+    outcome: null,
+    created_at: now,
+    updated_at: now,
+    deleted_at: null,
+    device_id: 'demo-device',
+  });
+  memoryFocusStore.set('demo-focus-2', {
+    id: 'demo-focus-2',
+    focus_day: refDate,
+    task_id: 'demo-task-2',
+    position: 2,
+    outcome: null,
+    created_at: now,
+    updated_at: now,
+    deleted_at: null,
+    device_id: 'demo-device',
+  });
+}
+
 function initializeMemoryStores(): void {
+  const isTestEnv =
+    typeof import.meta !== 'undefined' &&
+    (import.meta as { env?: { MODE?: string } }).env?.MODE === 'test';
+  const searchParams =
+    typeof window !== 'undefined' && window.location
+      ? new URLSearchParams(window.location.search)
+      : null;
+  const forceEmptyTasks = searchParams?.get('empty') === '1';
+
+  if (!isTestEnv && demoSeedState.seeded) {
+    memorySettingsStore = createInitialSettingsMap();
+    memoryCategoriesStore = createInitialCategoriesMap();
+    memoryTasksStore = new Map();
+    memoryFocusStore = new Map();
+    applyDemoSeedSync(forceEmptyTasks);
+    return;
+  }
+
   if (!loadBrowserStoreFromLocalStorage()) {
     memorySettingsStore = createInitialSettingsMap();
     memoryCategoriesStore = createInitialCategoriesMap();
@@ -905,99 +1132,8 @@ export async function seedDemoData(
   referenceDate = '2026-11-02',
 ): Promise<void> {
   resetMemoryFallbackStore();
-  await setSettingValue('user_name', 'Selasi');
-
-  // 8 tâches à faire et 2 tâches terminées fidèles à docs/ui-tasks-reference.png
-  const t1 = await createTask({
-    title: 'Réviser le chapitre de statistiques',
-    notes: 'Chapitre 4',
-    category_id: 'cat-ecole',
-    priority: 3,
-    due_date: referenceDate,
-    estimated_minutes: 45,
-    status: 'todo',
-  });
-  const t2 = await createTask({
-    title: 'Finaliser les wireframes du portfolio',
-    notes: "Page d'accueil",
-    category_id: 'cat-projets',
-    priority: 3,
-    due_date: referenceDate,
-    estimated_minutes: 60,
-    status: 'todo',
-  });
-  await createTask({
-    title: 'Faire une sortie de 5 km',
-    notes: "Prendre l'air",
-    category_id: 'cat-sport',
-    priority: 2,
-    due_date: referenceDate,
-    estimated_minutes: 30,
-    status: 'todo',
-  });
-  await createTask({
-    title: 'Appeler le dentiste',
-    notes: 'Prendre rendez-vous',
-    category_id: 'cat-perso',
-    priority: 1,
-    due_date: referenceDate,
-    estimated_minutes: 10,
-    status: 'todo',
-  });
-  await createTask({
-    title: 'Envoyer le dossier de candidature',
-    notes: 'Relire la lettre et joindre le CV',
-    category_id: 'cat-ecole',
-    priority: 2,
-    due_date: '2026-11-04',
-    status: 'todo',
-  });
-  await createTask({
-    title: 'Préparer la présentation du projet',
-    notes: 'Rassembler les premières idées',
-    category_id: 'cat-projets',
-    priority: 2,
-    due_date: '2026-11-05',
-    status: 'todo',
-  });
-  await createTask({
-    title: 'Réserver les billets pour le week-end',
-    notes: 'Comparer les horaires de train',
-    category_id: 'cat-perso',
-    priority: 1,
-    due_date: '2026-11-06',
-    status: 'todo',
-  });
-  await createTask({
-    title: 'Trier mes notes et idées',
-    notes: 'Faire un peu de place dans mes idées',
-    category_id: 'cat-inbox',
-    priority: 0,
-    due_date: null,
-    status: 'todo',
-  });
-
-  // 2 tâches terminées (Terminées 2)
-  await createTask({
-    title: 'Installer l’environnement de travail',
-    notes: 'Configuration initiale',
-    category_id: 'cat-projets',
-    priority: 1,
-    due_date: referenceDate,
-    status: 'done',
-  });
-  await createTask({
-    title: 'Organiser les dossiers du semestre',
-    notes: 'Cours et TD',
-    category_id: 'cat-ecole',
-    priority: 1,
-    due_date: referenceDate,
-    status: 'done',
-  });
-
-  // 2 premières tâches du jour épinglées au Focus (icône cible sur la maquette Tâches)
-  await addFocusItem(referenceDate, t1.id);
-  await addFocusItem(referenceDate, t2.id);
+  applyDemoSeedSync(false, referenceDate);
+  saveBrowserStoreToLocalStorage();
 }
 
 // ============================================================================

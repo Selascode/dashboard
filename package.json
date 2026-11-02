@@ -10,6 +10,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest",
+    "seed:demo": "node scripts/seed-demo.mjs",
+    "seed:reset": "node scripts/seed-demo.mjs --reset",
     "tauri": "tauri"
   },
   "dependencies": {

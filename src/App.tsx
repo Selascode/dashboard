@@ -22,9 +22,28 @@ export interface UndoAction {
   undo: () => Promise<void>;
 }
 
+function getInitialScreenFromUrl(): AppScreenId {
+  if (typeof window !== 'undefined' && window.location?.search) {
+    const params = new URLSearchParams(window.location.search);
+    const p = params.get('page');
+    if (
+      p === 'dashboard' ||
+      p === 'tasks' ||
+      p === 'agenda' ||
+      p === 'settings' ||
+      p === 'briefing'
+    ) {
+      return p;
+    }
+  }
+  return 'dashboard';
+}
+
 export const AppContent: React.FC = () => {
   const t = useTranslations();
-  const [activeScreen, setActiveScreen] = useState<AppScreenId>('dashboard');
+  const [activeScreen, setActiveScreen] = useState<AppScreenId>(
+    getInitialScreenFromUrl,
+  );
   const [previousScreen, setPreviousScreen] = useState<NavPage>('dashboard');
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [isShortcutsHelpOpen, setIsShortcutsHelpOpen] = useState(false);
@@ -32,7 +51,12 @@ export const AppContent: React.FC = () => {
   const [prefillQuickTask, setPrefillQuickTask] = useState<string | null>(null);
   const [selectedTaskIdFromPalette, setSelectedTaskIdFromPalette] = useState<
     string | null
-  >(null);
+  >(() => {
+    if (typeof window !== 'undefined' && window.location?.search) {
+      return new URLSearchParams(window.location.search).get('task');
+    }
+    return null;
+  });
   const [paletteTasks, setPaletteTasks] = useState<TaskRecord[]>([]);
   const [undoStack, setUndoStack] = useState<UndoAction[]>([]);
   const [undoToastVisible, setUndoToastVisible] = useState(false);
@@ -250,7 +274,7 @@ export const AppContent: React.FC = () => {
             onClick={() => {
               void handleUndo();
             }}
-            className="rounded-full bg-surface/20 px-2.5 py-1 font-semibold hover:bg-surface/30 transition-colors"
+            className="rounded-full border border-subtle bg-surface px-2.5 py-1 font-semibold text-primary hover:bg-surface-muted transition-colors"
           >
             {t.app.undo}
           </button>

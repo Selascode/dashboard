@@ -56,13 +56,13 @@ export const Topbar: React.FC<TopbarProps> = ({
         type="button"
         data-testid="topbar-search-trigger"
         onClick={onOpenPalette}
-        className="flex items-center justify-between gap-6 rounded-full border border-subtle bg-surface px-4 py-2 text-sm text-secondary shadow-sm hover:border-accent-primary/30 transition-colors min-w-[260px]"
+        className="focus-pill-control flex items-center justify-between gap-6 rounded-full px-4 py-2 text-sm text-secondary hover:border-accent-primary transition-colors min-w-[280px] lg:min-w-[320px]"
       >
         <span className="flex items-center gap-2.5">
           <Search className="h-4 w-4 text-secondary" aria-hidden="true" />
           <span>{t.app.searchPlaceholder}</span>
         </span>
-        <kbd className="rounded-md bg-surface-muted px-2 py-0.5 text-[11px] font-mono font-semibold text-secondary">
+        <kbd className="rounded-md border border-subtle bg-surface-muted px-2 py-0.5 text-[11px] font-mono font-semibold text-primary">
           {t.app.searchShortcut}
         </kbd>
       </button>

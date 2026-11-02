@@ -111,9 +111,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <span>{item.label}</span>
                     </span>
                     <kbd
+                      style={
+                        isActive
+                          ? {
+                              backgroundColor:
+                                'color-mix(in srgb, var(--bg-surface) 18%, var(--accent-primary))',
+                            }
+                          : undefined
+                      }
                       className={`rounded-md px-2 py-0.5 text-[10px] font-mono font-semibold ${
                         isActive
-                          ? 'bg-surface/15 text-accent-foreground'
+                          ? 'text-accent-foreground'
                           : 'bg-surface-muted text-secondary'
                       }`}
                     >
@@ -140,7 +148,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <span>{t.nav.mailReserved}</span>
         </div>
 
-        <div className="rounded-2xl bg-surface-muted p-4">
+        <div className="rounded-2xl border border-subtle bg-surface-muted p-4">
           <div className="mb-2 inline-flex items-center justify-center text-primary">
             <Sprout className="h-4 w-4" aria-hidden="true" />
           </div>

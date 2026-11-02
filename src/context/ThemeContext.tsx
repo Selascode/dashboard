@@ -91,10 +91,28 @@ function applyThemeAndTokensToDocument(
   return derived;
 }
 
+function getQueryThemeOverride(): ThemeMode | null {
+  if (typeof window === 'undefined' || !window.location) {
+    return null;
+  }
+  const param = new URLSearchParams(window.location.search).get('theme');
+  if (param === 'light' || param === 'dark' || param === 'system') {
+    return param;
+  }
+  return null;
+}
+
 function readInitialCachedTheme(): {
   mode: ThemeMode;
   paletteId: string;
 } {
+  const queryOverride = getQueryThemeOverride();
+  if (queryOverride) {
+    return {
+      mode: queryOverride,
+      paletteId: DEFAULT_PALETTE.id,
+    };
+  }
   if (typeof window !== 'undefined' && window.localStorage) {
     try {
       const raw = window.localStorage.getItem(THEME_CACHE_STORAGE_KEY);
@@ -155,9 +173,11 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
     ])
       .then(([storedTheme, storedPaletteId, storedCustomPalettes, storedUserName]) => {
         if (!isMounted) return;
+        const queryOverride = getQueryThemeOverride();
+        const effectiveTheme = queryOverride ?? storedTheme;
         const validMode: ThemeMode =
-          storedTheme === 'light' || storedTheme === 'dark' || storedTheme === 'system'
-            ? storedTheme
+          effectiveTheme === 'light' || effectiveTheme === 'dark' || effectiveTheme === 'system'
+            ? effectiveTheme
             : 'system';
         const validCustom = Array.isArray(storedCustomPalettes)
           ? storedCustomPalettes

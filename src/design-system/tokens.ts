@@ -319,8 +319,8 @@ export function deriveBasePaletteTokens(
     palette.overrides?.dark?.['--bg-surface-muted'] ?? defaultDarkSurfaceMuted,
   );
 
-  const lightBorderSubtle = mixHexColors(darkest, lightSurface, 0.1);
-  const darkBorderSubtle = mixHexColors(lightest, dark, 0.14);
+  const lightBorderSubtle = mixHexColors(darkest, lightest, 0.22);
+  const darkBorderSubtle = mixHexColors(lightest, dark, 0.25);
 
   const lightTokens: ThemeTokenMap = {
     '--bg-canvas': lightest,
