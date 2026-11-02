@@ -1,10 +1,26 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { UndoAction } from '../App';
 import { CategoryRecord, getCategories } from '../lib/db';
 import { useTranslations } from '../i18n';
 
-export const TasksPage: React.FC = () => {
+export interface TasksPageProps {
+  quickAddFocusTrigger?: number;
+  prefillText?: string | null;
+  onClearPrefill?: () => void;
+  initialSelectedTaskId?: string | null;
+  onNavigateSettings?: () => void;
+  onPushUndo?: (action: UndoAction) => void;
+}
+
+export const TasksPage: React.FC<TasksPageProps> = ({
+  quickAddFocusTrigger = 0,
+  prefillText,
+  onClearPrefill,
+}) => {
   const t = useTranslations();
   const [categories, setCategories] = useState<CategoryRecord[]>([]);
+  const [quickInputValue, setQuickInputValue] = useState('');
+  const quickInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     let mounted = true;
@@ -23,6 +39,20 @@ export const TasksPage: React.FC = () => {
       mounted = false;
     };
   }, []);
+
+  useEffect(() => {
+    if (quickAddFocusTrigger > 0) {
+      quickInputRef.current?.focus();
+    }
+  }, [quickAddFocusTrigger]);
+
+  useEffect(() => {
+    if (prefillText) {
+      setQuickInputValue(prefillText);
+      quickInputRef.current?.focus();
+      onClearPrefill?.();
+    }
+  }, [prefillText, onClearPrefill]);
 
   return (
     <div data-testid="page-tasks" className="flex flex-col gap-6">
@@ -80,8 +110,21 @@ export const TasksPage: React.FC = () => {
         </ul>
       </section>
 
-      <section className="rounded-3xl border border-subtle bg-surface p-6 text-center">
-        <p className="text-sm text-secondary">{t.tasks.emptyTasks}</p>
+      <section className="rounded-3xl border border-subtle bg-surface p-6">
+        <div className="flex items-center justify-between gap-3 border-t border-subtle pt-4">
+          <input
+            ref={quickInputRef}
+            type="text"
+            data-testid="tasks-quick-add-input"
+            value={quickInputValue}
+            onChange={(e) => setQuickInputValue(e.target.value)}
+            placeholder={t.tasks.addTaskPlaceholder}
+            className="flex-1 bg-transparent text-sm text-primary placeholder:text-secondary focus:outline-none"
+          />
+          <kbd className="rounded-md bg-surface-muted px-2 py-0.5 text-xs font-mono text-secondary">
+            {t.nav.shortcuts.quickAdd}
+          </kbd>
+        </div>
       </section>
     </div>
   );

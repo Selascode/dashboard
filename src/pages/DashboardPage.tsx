@@ -2,11 +2,20 @@ import React from 'react';
 import { Calendar, Clock, Focus, Pin } from 'lucide-react';
 import { useTranslations } from '../i18n';
 
+import { UndoAction } from '../App';
+
 interface DashboardPageProps {
   onComposeFocus?: () => void;
+  onNavigateAgenda?: () => void;
+  onNavigateTasks?: () => void;
+  onNavigateSettings?: () => void;
+  onNewTask?: () => void;
+  onPushUndo?: (action: UndoAction) => void;
 }
 
-export const DashboardPage: React.FC<DashboardPageProps> = ({ onComposeFocus }) => {
+export const DashboardPage: React.FC<DashboardPageProps> = ({
+  onComposeFocus,
+}) => {
   const t = useTranslations();
 
   return (

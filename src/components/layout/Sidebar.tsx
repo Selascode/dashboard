@@ -1,51 +1,58 @@
 import React, { useRef } from 'react';
-import { Calendar, CheckCircle2, LayoutGrid, Mail, SlidersHorizontal } from 'lucide-react';
+import {
+  Aperture,
+  Calendar,
+  CheckCircle2,
+  ChevronsUpDown,
+  HelpCircle,
+  LayoutGrid,
+  Mail,
+  SlidersHorizontal,
+  Sprout,
+  User,
+} from 'lucide-react';
 import { useTranslations } from '../../i18n';
+import { getSidebarCommands } from '../../lib/commands';
 
 export type NavPage = 'dashboard' | 'tasks' | 'agenda' | 'settings';
 
 interface SidebarProps {
   activePage: NavPage;
   onNavigate: (page: NavPage) => void;
+  onOpenShortcutsHelp?: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate }) => {
+export const Sidebar: React.FC<SidebarProps> = ({
+  activePage,
+  onNavigate,
+  onOpenShortcutsHelp,
+}) => {
   const t = useTranslations();
   const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const sidebarCommands = getSidebarCommands();
 
-  const navItems: Array<{
-    id: NavPage;
-    label: string;
-    shortcut: string;
-    icon: React.ReactNode;
-  }> = [
-    {
-      id: 'dashboard',
-      label: t.nav.dashboard,
-      shortcut: t.nav.shortcuts.dashboard,
-      icon: <LayoutGrid className="h-4 w-4 shrink-0" aria-hidden="true" />,
-    },
-    {
-      id: 'tasks',
-      label: t.nav.tasks,
-      shortcut: t.nav.shortcuts.tasks,
-      icon: <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />,
-    },
-    {
-      id: 'agenda',
-      label: t.nav.agenda,
-      shortcut: t.nav.shortcuts.agenda,
-      icon: <Calendar className="h-4 w-4 shrink-0" aria-hidden="true" />,
-    },
-    {
-      id: 'settings',
-      label: t.nav.settings,
-      shortcut: t.nav.shortcuts.settings,
-      icon: <SlidersHorizontal className="h-4 w-4 shrink-0" aria-hidden="true" />,
-    },
-  ];
+  const iconByScreen: Record<NavPage, React.ReactNode> = {
+    dashboard: <LayoutGrid className="h-4 w-4 shrink-0" aria-hidden="true" />,
+    tasks: <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />,
+    agenda: <Calendar className="h-4 w-4 shrink-0" aria-hidden="true" />,
+    settings: <SlidersHorizontal className="h-4 w-4 shrink-0" aria-hidden="true" />,
+  };
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+  const navItems = sidebarCommands.map((cmd) => {
+    const pageId = (cmd.targetScreen ?? 'dashboard') as NavPage;
+    const labelKey = cmd.sidebarLabelKey ?? 'dashboard';
+    return {
+      id: pageId,
+      label: t.nav[labelKey],
+      shortcut: cmd.shortcutBadge,
+      icon: iconByScreen[pageId],
+    };
+  });
+
+  const handleKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    index: number,
+  ) => {
     if (event.key === 'ArrowDown') {
       event.preventDefault();
       const nextIndex = (index + 1) % navItems.length;
@@ -64,13 +71,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate }) => {
       className="w-60 shrink-0 border-r border-subtle bg-surface flex flex-col justify-between select-none"
     >
       <div className="p-4">
-        <div className="px-2 py-2 mb-6">
-          <p className="text-lg font-display font-bold tracking-tight text-primary">
+        {/* Logo focus */}
+        <div className="flex items-center gap-3 px-2 py-2 mb-6">
+          <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-accent-primary text-accent-foreground">
+            <Aperture className="h-4 w-4" aria-hidden="true" />
+          </span>
+          <span className="text-xl font-display font-bold tracking-tight text-primary">
             {t.app.brand}
-          </p>
+          </span>
         </div>
 
-        <p className="px-3 mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
+        <p className="px-3 mb-2.5 text-[11px] font-semibold uppercase tracking-wider text-muted">
           {t.nav.sectionTitle}
         </p>
 
@@ -116,7 +127,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate }) => {
         </nav>
       </div>
 
-      <div className="p-4 border-t border-subtle">
+      {/* Bas de barre latérale : encart "Un pas à la fois.", aide et espace */}
+      <div className="p-4 flex flex-col gap-3">
         {/* DSH-2 : Emplacement réservé au module Mail dans la barre latérale, masqué par défaut */}
         <div
           data-testid="sidebar-mail-reserved"
@@ -127,7 +139,52 @@ export const Sidebar: React.FC<SidebarProps> = ({ activePage, onNavigate }) => {
           <Mail className="h-4 w-4" aria-hidden="true" />
           <span>{t.nav.mailReserved}</span>
         </div>
-        <p className="px-2 text-xs text-secondary">{t.app.keyboardHint}</p>
+
+        <div className="rounded-2xl bg-surface-muted p-4">
+          <div className="mb-2 inline-flex items-center justify-center text-primary">
+            <Sprout className="h-4 w-4" aria-hidden="true" />
+          </div>
+          <p className="text-xs font-display font-bold text-primary mb-1">
+            {t.nav.stepByStepTitle}
+          </p>
+          <p className="text-[11px] leading-relaxed text-secondary">
+            {t.nav.stepByStepDescription}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          data-testid="sidebar-help-btn"
+          onClick={onOpenShortcutsHelp}
+          className="flex items-center gap-2.5 rounded-xl px-2.5 py-1.5 text-left text-xs text-secondary hover:bg-surface-muted hover:text-primary transition-colors"
+        >
+          <HelpCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
+          <span>{t.nav.needHelp}</span>
+        </button>
+
+        <div className="pt-2 border-t border-subtle">
+          <button
+            type="button"
+            data-testid="sidebar-workspace-btn"
+            onClick={() => onNavigate('settings')}
+            className="w-full flex items-center justify-between gap-2 rounded-2xl px-2 py-1.5 text-left hover:bg-surface-muted transition-colors"
+          >
+            <span className="flex items-center gap-2.5">
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-surface-muted text-primary">
+                <User className="h-4 w-4" aria-hidden="true" />
+              </span>
+              <span className="flex flex-col">
+                <span className="text-xs font-semibold text-primary">
+                  {t.nav.workspaceTitle}
+                </span>
+                <span className="text-[11px] text-secondary">
+                  {t.nav.workspaceSubtitle}
+                </span>
+              </span>
+            </span>
+            <ChevronsUpDown className="h-3.5 w-3.5 text-muted" aria-hidden="true" />
+          </button>
+        </div>
       </div>
     </aside>
   );

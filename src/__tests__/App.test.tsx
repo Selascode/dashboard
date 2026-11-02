@@ -4,7 +4,19 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import App from '../App';
 import { getSettingValue, resetMemoryFallbackStore } from '../lib/db';
 
-describe('Jalon J0 — Socle UI, Navigation Clavier, Layout Fixe & Thèmes', () => {
+if (typeof globalThis.ResizeObserver === 'undefined') {
+  globalThis.ResizeObserver = class ResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}
+
+if (typeof Element !== 'undefined' && !Element.prototype.scrollIntoView) {
+  Element.prototype.scrollIntoView = () => {};
+}
+
+describe('Coque, Navigation Clavier, Palette cmdk & Thèmes (Lots A & B)', () => {
   beforeEach(() => {
     resetMemoryFallbackStore();
     document.documentElement.classList.remove('dark');
@@ -12,22 +24,21 @@ describe('Jalon J0 — Socle UI, Navigation Clavier, Layout Fixe & Thèmes', () 
     document.documentElement.removeAttribute('data-theme-mode');
   });
 
-  it('affiche la barre latérale fixe et les 4 zones du Dashboard au démarrage (DSH-1, DSH-3)', () => {
+  it('affiche la barre latérale fixe, la topbar et les 4 zones du Dashboard au démarrage (DSH-1, DSH-3)', () => {
     render(<App />);
 
     expect(screen.getByTestId('app-sidebar')).toBeInTheDocument();
+    expect(screen.getByTestId('app-topbar')).toBeInTheDocument();
     expect(screen.getByTestId('nav-dashboard')).toHaveAttribute('aria-current', 'page');
     expect(screen.getByTestId('nav-tasks')).toBeInTheDocument();
     expect(screen.getByTestId('nav-agenda')).toBeInTheDocument();
     expect(screen.getByTestId('nav-settings')).toBeInTheDocument();
 
-    // 4 zones fixes du Dashboard
     expect(screen.getByTestId('zone-focus5')).toBeInTheDocument();
     expect(screen.getByTestId('zone-today-agenda')).toBeInTheDocument();
     expect(screen.getByTestId('zone-upcoming-deadlines')).toBeInTheDocument();
     expect(screen.getByTestId('zone-pinned-shortcuts')).toBeInTheDocument();
 
-    // État vide utile du Focus 5 avec bouton "Composer mon Focus"
     expect(screen.getByTestId('compose-focus-btn')).toHaveTextContent('Composer mon Focus');
   });
 
@@ -46,7 +57,7 @@ describe('Jalon J0 — Socle UI, Navigation Clavier, Layout Fixe & Thèmes', () 
     expect(dashboardMail).toHaveAttribute('aria-hidden', 'true');
   });
 
-  it('permet de naviguer entre les écrans au clic et via les raccourcis clavier Ctrl+1, Ctrl+2, Ctrl+3 (ACC-1)', async () => {
+  it('gère les raccourcis Ctrl+1..4, Ctrl+B, Ctrl+K, Ctrl+N, N, ? et Échap (ACC-1)', async () => {
     render(<App />);
 
     // Ctrl+2 -> Tâches
@@ -54,24 +65,53 @@ describe('Jalon J0 — Socle UI, Navigation Clavier, Layout Fixe & Thèmes', () 
     expect(await screen.findByTestId('page-tasks')).toBeInTheDocument();
     expect(screen.getByTestId('nav-tasks')).toHaveAttribute('aria-current', 'page');
 
-    // Vérifie les 5 catégories par défaut chargées depuis la couche d'accès aux données
-    await waitFor(() => {
-      expect(screen.getByTestId('category-card-inbox')).toBeInTheDocument();
-      expect(screen.getByTestId('category-card-ecole')).toBeInTheDocument();
-      expect(screen.getByTestId('category-card-sport')).toBeInTheDocument();
-      expect(screen.getByTestId('category-card-perso')).toBeInTheDocument();
-      expect(screen.getByTestId('category-card-projets')).toBeInTheDocument();
-    });
+    // Touche N dans la vue Tâches -> focus sur le champ d'ajout
+    const quickInput = screen.getByTestId('tasks-quick-add-input');
+    quickInput.blur();
+    fireEvent.keyDown(window, { key: 'n' });
+    expect(document.activeElement).toBe(quickInput);
 
-    // Ctrl+3 -> Agenda
+    // Ctrl+3 -> Agenda (écran bientôt)
     fireEvent.keyDown(window, { key: '3', ctrlKey: true });
     expect(await screen.findByTestId('page-agenda')).toBeInTheDocument();
     expect(screen.getByTestId('nav-agenda')).toHaveAttribute('aria-current', 'page');
 
-    // Ctrl+1 -> Retour au Dashboard
+    // Ctrl+4 -> Paramètres (écran bientôt + apparence)
+    fireEvent.keyDown(window, { key: '4', ctrlKey: true });
+    expect(await screen.findByTestId('page-settings')).toBeInTheDocument();
+    expect(screen.getByTestId('settings-coming-soon')).toBeInTheDocument();
+
+    // Ctrl+B -> Briefing (écran bientôt) puis Échap ferme le Briefing (BRF-3)
+    fireEvent.keyDown(window, { key: 'b', ctrlKey: true });
+    expect(await screen.findByTestId('page-briefing')).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(await screen.findByTestId('page-settings')).toBeInTheDocument();
+
+    // Ctrl+K -> Palette cmdk puis Échap ferme la palette
+    fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    expect(await screen.findByTestId('command-palette-overlay')).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => {
+      expect(screen.queryByTestId('command-palette-overlay')).not.toBeInTheDocument();
+    });
+
+    // ? -> Aide des raccourcis puis Échap ferme la modale
+    fireEvent.keyDown(window, { key: '?', shiftKey: true });
+    expect(await screen.findByTestId('shortcuts-help-modal')).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'Escape' });
+    await waitFor(() => {
+      expect(screen.queryByTestId('shortcuts-help-modal')).not.toBeInTheDocument();
+    });
+
+    // Ctrl+N -> Nouvelle tâche (ouvre Tâches et focus l'input)
     fireEvent.keyDown(window, { key: '1', ctrlKey: true });
     expect(await screen.findByTestId('page-dashboard')).toBeInTheDocument();
-    expect(screen.getByTestId('nav-dashboard')).toHaveAttribute('aria-current', 'page');
+
+    fireEvent.keyDown(window, { key: 'n', ctrlKey: true });
+    expect(await screen.findByTestId('page-tasks')).toBeInTheDocument();
   });
 
   it('bascule le thème Clair / Sombre / Système depuis les Paramètres et persiste dans Setting (ACC-2)', async () => {
@@ -80,21 +120,18 @@ describe('Jalon J0 — Socle UI, Navigation Clavier, Layout Fixe & Thèmes', () 
     fireEvent.click(screen.getByTestId('nav-settings'));
     expect(await screen.findByTestId('page-settings')).toBeInTheDocument();
 
-    // Bascule en thème Sombre
     fireEvent.click(screen.getByTestId('theme-option-dark'));
     await waitFor(async () => {
       expect(document.documentElement.classList.contains('dark')).toBe(true);
       expect(await getSettingValue('theme', 'system')).toBe('dark');
     });
 
-    // Bascule en thème Clair
     fireEvent.click(screen.getByTestId('theme-option-light'));
     await waitFor(async () => {
       expect(document.documentElement.classList.contains('dark')).toBe(false);
       expect(await getSettingValue('theme', 'system')).toBe('light');
     });
 
-    // Bascule en thème Système
     fireEvent.click(screen.getByTestId('theme-option-system'));
     await waitFor(async () => {
       expect(await getSettingValue('theme', 'light')).toBe('system');

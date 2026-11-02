@@ -75,6 +75,20 @@ export const SettingsPage: React.FC = () => {
         <p className="text-sm text-secondary">{t.settings.description}</p>
       </header>
 
+      <section
+        data-testid="settings-coming-soon"
+        className="rounded-3xl border border-subtle bg-surface p-6 flex flex-wrap items-center justify-between gap-4"
+      >
+        <div>
+          <span className="inline-block rounded-full bg-surface-muted px-3 py-1 text-xs font-semibold text-secondary mb-2">
+            {t.settings.comingSoonBadge}
+          </span>
+          <p className="text-sm font-semibold text-primary">
+            {t.settings.comingSoonTitle}
+          </p>
+        </div>
+      </section>
+
       {/* Prénom personnalisé */}
       <section
         aria-labelledby="profile-heading"
