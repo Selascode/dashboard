@@ -1,50 +1,122 @@
 {
   "app": {
-    "title": "Dashboard de Productivité",
+    "brand": "focus",
+    "title": "focus",
     "subtitle": "Que dois-je faire aujourd'hui ?",
     "skipToContent": "Aller au contenu principal",
-    "keyboardHint": "Navigation 100 % clavier activée"
+    "keyboardHint": "Navigation 100 % clavier activée",
+    "footerMotto": "Un espace pour avancer à votre rythme.",
+    "allShortcutsLink": "? Tous les raccourcis clavier",
+    "newTaskButton": "Nouvelle tâche",
+    "searchPlaceholder": "Rechercher dans mon espace",
+    "searchShortcut": "⌘K",
+    "close": "Fermer",
+    "cancel": "Annuler",
+    "save": "Enregistrer",
+    "undo": "Annuler (Ctrl+Z)",
+    "undoToast": "Action effectuée. Appuyez sur Ctrl+Z pour annuler."
   },
   "nav": {
     "sidebarLabel": "Navigation principale",
+    "sectionTitle": "MON ESPACE",
     "dashboard": "Dashboard",
     "tasks": "Tâches",
     "agenda": "Agenda",
     "settings": "Paramètres",
+    "briefing": "Briefing",
     "mailReserved": "Mail (plus tard)",
+    "stepByStepTitle": "Un pas à la fois.",
+    "stepByStepDescription": "Pas besoin de tout faire. Commencez par ce qui compte pour vous.",
+    "needHelp": "Besoin d'un coup de main ?",
+    "workspaceTitle": "Mon espace",
+    "workspaceSubtitle": "Personnel",
     "shortcuts": {
-      "dashboard": "Ctrl+1",
-      "tasks": "Ctrl+2",
-      "agenda": "Ctrl+3",
-      "settings": "Menu"
+      "dashboard": "CTRL+1",
+      "tasks": "CTRL+2",
+      "agenda": "CTRL+3",
+      "settings": "CTRL+4",
+      "briefing": "CTRL+B",
+      "palette": "CTRL+K",
+      "newTask": "CTRL+N",
+      "quickAdd": "N",
+      "undo": "CTRL+Z",
+      "help": "?",
+      "escape": "ÉCHAP"
     }
   },
+  "commands": {
+    "paletteTitle": "Palette de commandes",
+    "palettePlaceholder": "Tapez une commande ou recherchez une tâche…",
+    "emptyResults": "Aucun résultat correspondant.",
+    "groupNavigation": "Navigation",
+    "groupActions": "Actions rapides",
+    "groupTemplates": "Modèles de saisie",
+    "groupTasks": "Tâches",
+    "navDashboard": "Aller au Dashboard",
+    "navTasks": "Aller aux Tâches",
+    "navAgenda": "Aller à l'Agenda",
+    "navSettings": "Ouvrir les Paramètres",
+    "openBriefing": "Ouvrir le Briefing du matin",
+    "createNewTask": "Créer une nouvelle tâche",
+    "inlineNewTask": "Ajouter une tâche dans la liste",
+    "undoLastAction": "Annuler la dernière action",
+    "openShortcutsHelp": "Afficher l'aide des raccourcis clavier",
+    "closeOverlay": "Fermer la fenêtre ou superposition active",
+    "toggleTheme": "Basculer le mode clair / sombre",
+    "shortcutsModalTitle": "Raccourcis clavier",
+    "shortcutsModalSubtitle": "100 % des actions courantes sont accessibles sans souris."
+  },
   "dashboard": {
-    "heading": "Vue d'ensemble du jour",
-    "description": "Disposition fixe à 4 zones — clarté immédiate sans configuration obligatoire.",
+    "greetingWithName": "Bonjour {name}, votre journée, l’esprit léger.",
+    "greetingWithoutName": "Bonjour, votre journée, l’esprit léger.",
+    "heading": "Bonjour, votre journée, l’esprit léger.",
+    "description": "L’essentiel au même endroit, pour avancer à votre rythme.",
     "focusZone": {
-      "title": "Focus 5 : la boussole du jour",
+      "title": "Focus 5",
+      "subtitle": "Votre boussole du jour",
       "badge": "Priorité absolue",
-      "progress": "0 / 5 terminées",
-      "emptyTitle": "Aucune priorité sélectionnée pour aujourd'hui",
-      "emptyDescription": "Choisissez jusqu'à 5 tâches clés pour garder le cap toute la journée.",
+      "progress": "{count}/5",
+      "prioritiesSuffix": "priorités",
+      "emptyTitle": "Qu’est-ce qui compte pour vous aujourd’hui ?",
+      "emptyDescription": "Votre Focus est encore vide. Choisissez jusqu’à 5 priorités.",
+      "emptySubDescription": "Une seule, c’est déjà un bon début.",
       "composeButton": "Composer mon Focus",
-      "nowModeButton": "Mode Maintenant"
+      "nowModeButton": "Mode Maintenant",
+      "nowModeExit": "Quitter le mode Maintenant",
+      "nowModeHeading": "En cours maintenant",
+      "nowModeTimerStart": "Démarrer 25 min",
+      "nowModeTimerPause": "Pause",
+      "nowModeTimerReset": "Réinitialiser",
+      "footerMotto": "Moins de dispersion, plus d’intention.",
+      "moveUp": "Monter la priorité",
+      "moveDown": "Descendre la priorité",
+      "removeFromFocus": "Retirer du Focus",
+      "limitReached": "Limite atteinte : 5 priorités maximum dans le Focus du jour."
     },
     "agendaZone": {
       "title": "Agenda du jour",
-      "subtitle": "Lecture seule (ICS)",
-      "empty": "Aucun événement prévu aujourd'hui."
+      "subtitle": "ICS · Lecture seule",
+      "emptyTitle": "Une journée sans rendez-vous.",
+      "empty": "Aucun événement prévu aujourd’hui. Vos événements ICS apparaîtront ici.",
+      "openLink": "Ouvrir l’agenda"
     },
     "deadlinesZone": {
       "title": "Prochaines échéances",
       "subtitle": "Tâches à venir et retards",
-      "empty": "Aucune échéance imminente ou en retard."
+      "upcomingTab": "À venir",
+      "overdueTab": "En retard",
+      "emptyTitle": "Tout est tranquille pour le moment.",
+      "empty": "Aucune échéance à venir ou en retard.",
+      "openTasksAria": "Voir toutes les tâches",
+      "overdueBadge": "En retard"
     },
     "ShortcutsZone": {
       "title": "Raccourcis épinglés",
       "subtitle": "Outils connectés favoris",
-      "empty": "Aucun raccourci épinglé pour le moment."
+      "manageLink": "Gérer mes outils connectés",
+      "emptyTitle": "Vos outils préférés, juste ici.",
+      "empty": "Aucun raccourci pour le moment. Épinglez vos outils connectés favoris pour les retrouver en un clic.",
+      "pinButton": "Épingler un outil"
     },
     "mailZone": {
       "title": "Mail (emplacement réservé V3)",
@@ -52,34 +124,137 @@
     }
   },
   "tasks": {
-    "heading": "Tâches & Catégories",
-    "description": "Gérez vos tâches et visualisez vos 5 catégories par défaut.",
-    "viewList": "Vue liste",
-    "viewCategories": "Vue par catégories",
+    "heading": "Vos tâches, l’esprit plus clair.",
+    "description": "Notez, organisez, puis avancez. Une chose à la fois.",
+    "categoriesSectionTitle": "VOS CATÉGORIES",
+    "manageCategories": "Gérer les catégories",
+    "allCategories": "Toutes",
+    "cardTitle": "Mes tâches",
+    "todoCountSuffix": "à faire",
+    "tabTodo": "À faire",
+    "tabDone": "Terminées",
+    "searchPlaceholder": "Rechercher une tâche",
+    "sortByDueDate": "Échéance",
+    "sortByPriority": "Priorité",
+    "viewList": "Liste",
+    "viewCategories": "Catégories",
     "defaultCategoriesTitle": "Catégories initialisées en base locale",
     "systemBadge": "Système",
-    "emptyTasks": "Aucune tâche enregistrée. La saisie rapide (Ctrl+Maj+Espace) sera activée au jalon J1."
+    "emptyTasks": "Aucune tâche dans cette vue. Appuyez sur N pour ajouter votre première tâche.",
+    "groupToday": "Aujourd’hui",
+    "groupUpcoming": "À venir",
+    "groupNoDueDate": "Sans échéance",
+    "dueToday": "Aujourd’hui",
+    "dueToPlan": "À planifier",
+    "overduePrefix": "En retard ·",
+    "addTaskPlaceholder": "Ajouter une tâche…",
+    "quickAddPlaceholder": "Ex: Réviser le chapitre de statistiques #ecole @auj !3 ~45m *",
+    "quickAddSubmit": "Ajouter",
+    "toggleFocusAdd": "Ajouter au Focus 5",
+    "toggleFocusRemove": "Retirer du Focus 5",
+    "taskActionsAria": "Actions de la tâche",
+    "priorityLabels": {
+      "p0": "Normale",
+      "p1": "Basse (!1)",
+      "p2": "Moyenne (!2)",
+      "p3": "Haute (!3)"
+    },
+    "statusLabels": {
+      "todo": "À faire",
+      "in_progress": "En cours",
+      "done": "Terminée",
+      "cancelled": "Annulée"
+    },
+    "detailPanel": {
+      "title": "Détail et édition",
+      "subtitle": "Modifiez les propriétés de la tâche sélectionnée.",
+      "fieldTitle": "Titre",
+      "fieldNotes": "Notes",
+      "fieldNotesPlaceholder": "Ajouter un détail ou une sous-étape…",
+      "fieldCategory": "Catégorie",
+      "fieldDueDate": "Échéance",
+      "fieldPriority": "Priorité",
+      "fieldDuration": "Durée estimée (minutes)",
+      "fieldStatus": "Statut",
+      "focusButtonAdd": "Épingler au Focus 5",
+      "focusButtonRemove": "Retirer du Focus 5",
+      "deleteTask": "Supprimer la tâche"
+    },
+    "syntaxPanel": {
+      "title": "Saisie rapide au clavier",
+      "subtitle": "Une seule ligne suffit pour créer une tâche complète et catégorisée en moins de 5 secondes.",
+      "exampleLabel": "Exemple de syntaxe",
+      "exampleCode": "Rendre le TP de SGBD #ecole @ven 18h !3 ~2h *",
+      "tokensTitle": "Jetons reconnus",
+      "tokenCategory": "#catégorie",
+      "tokenCategoryDesc": "Assigne la catégorie (#ecole, #sport, #perso, #projets)",
+      "tokenDate": "@date",
+      "tokenDateDesc": "Définit l’échéance (@auj, @demain, @ven, @15/11)",
+      "tokenPriority": "!1 à !3",
+      "tokenPriorityDesc": "Définit la priorité (!3 = haute, sans jeton = 0)",
+      "tokenDuration": "~durée",
+      "tokenDurationDesc": "Durée estimée (~30m, ~45m, ~1h, ~1h30)",
+      "tokenFocus": "* (en fin)",
+      "tokenFocusDesc": "Ajoute directement la tâche au Focus 5 du jour",
+      "templatesTitle": "Modèles de saisie rapide",
+      "templatesSubtitle": "Cliquez ou appuyez sur Entrée pour préremplir la saisie.",
+      "templates": {
+        "study": {
+          "label": "Session de révision",
+          "template": "Réviser le chapitre #ecole @auj !2 ~45m"
+        },
+        "sport": {
+          "label": "Séance de sport",
+          "template": "Faire une sortie de 5 km #sport @auj !2 ~30m"
+        },
+        "project": {
+          "label": "Avancée projet",
+          "template": "Finaliser la maquette #projets @auj !3 ~1h *"
+        }
+      }
+    }
   },
   "agenda": {
-    "heading": "Agenda en lecture seule",
-    "description": "Consultez vos emplois du temps ICS en vue Semaine ou Mois.",
+    "heading": "Votre agenda, en toute clarté.",
+    "description": "Consultez vos emplois du temps ICS en lecture seule, sans compte ni nuage obligatoire.",
+    "comingSoonBadge": "Bientôt · Jalon J3",
+    "comingSoonTitle": "L’agenda en lecture seule arrive au jalon J3.",
+    "comingSoonDescription": "Vous pourrez importer un fichier ICS ou abonner une URL ICS (protégée dans le trousseau du système) et basculer entre les vues Semaine et Mois.",
     "viewWeek": "Semaine",
     "viewMonth": "Mois",
-    "emptySources": "Aucune source ICS configurée. L'import de fichiers et d'URL ICS sera activé au jalon J3."
+    "emptySources": "Aucune source ICS configurée pour le moment.",
+    "backToDashboard": "Retourner au Dashboard (Ctrl+1)"
+  },
+  "briefing": {
+    "heading": "Briefing du matin",
+    "description": "Faites le point sur votre journée en moins de 30 secondes et composez votre Focus 5.",
+    "comingSoonBadge": "Bientôt · Jalon J5",
+    "comingSoonTitle": "Le rituel du Briefing matinal arrive au jalon J5.",
+    "comingSoonDescription": "Il rassemblera vos événements du jour, vos tâches échues et le Focus de la veille non terminé pour composer votre Focus 5 en un clic.",
+    "closeHint": "Appuyez sur Échap pour fermer et revenir à votre espace."
   },
   "settings": {
-    "heading": "Paramètres",
-    "description": "Personnalisez l'apparence et vérifiez l'état du socle local-first.",
+    "heading": "Paramètres de votre espace",
+    "description": "Personnalisez l’apparence, la palette et vérifiez le socle local-first.",
+    "comingSoonBadge": "En évolution · Jalons J2 à J5",
+    "comingSoonTitle": "Les réglages avancés (sources ICS, lanceur, sauvegardes) arrivent prochainement.",
+    "profile": {
+      "title": "Accueil personnalisé",
+      "description": "Prénom affiché dans le message d’accueil du Dashboard (optionnel).",
+      "label": "Votre prénom",
+      "placeholder": "Ex: Selasi"
+    },
     "appearance": {
       "title": "Apparence et lisibilité",
-      "description": "Choisissez le thème de l'interface. Le contraste respecte le niveau WCAG AA.",
+      "description": "Choisissez le mode d’affichage et la palette dynamique. Le contraste respecte le niveau WCAG AA.",
       "groupLabel": "Choix du thème de couleur",
+      "paletteGroupLabel": "Choix de la palette",
       "light": "Clair",
       "lightHint": "Fond lumineux à fort contraste",
       "dark": "Sombre",
       "darkHint": "Confort visuel en basse lumière",
       "system": "Système",
-      "systemHint": "Suit automatiquement votre système d'exploitation",
+      "systemHint": "Suit automatiquement votre système d’exploitation",
       "activeTheme": "Thème appliqué :"
     },
     "storage": {

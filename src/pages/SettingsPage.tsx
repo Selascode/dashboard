@@ -1,14 +1,28 @@
 import React, { useEffect, useState } from 'react';
-import { Monitor, Moon, Sun } from 'lucide-react';
+import { Monitor, Moon, Palette, Sun } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { DbStatus, getCategories, getDbStatus, ThemeMode } from '../lib/db';
 import { useTranslations } from '../i18n';
 
 export const SettingsPage: React.FC = () => {
   const t = useTranslations();
-  const { theme, resolvedTheme, setTheme } = useTheme();
+  const {
+    theme,
+    resolvedTheme,
+    setTheme,
+    activePaletteId,
+    setActivePaletteId,
+    palettes,
+    userName,
+    setUserName,
+  } = useTheme();
   const [dbStatus, setDbStatus] = useState<DbStatus | null>(null);
   const [categoryCount, setCategoryCount] = useState<number>(0);
+  const [nameInput, setNameInput] = useState<string>(userName);
+
+  useEffect(() => {
+    setNameInput(userName);
+  }, [userName]);
 
   useEffect(() => {
     let mounted = true;
@@ -55,25 +69,71 @@ export const SettingsPage: React.FC = () => {
   return (
     <div data-testid="page-settings" className="flex flex-col gap-6">
       <header>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
+        <h1 className="text-3xl font-display font-bold tracking-tight text-primary">
           {t.settings.heading}
         </h1>
-        <p className="text-sm text-slate-600 dark:text-slate-300">{t.settings.description}</p>
+        <p className="text-sm text-secondary">{t.settings.description}</p>
       </header>
+
+      {/* Prénom personnalisé */}
+      <section
+        aria-labelledby="profile-heading"
+        className="rounded-3xl border border-subtle bg-surface p-6"
+      >
+        <h2
+          id="profile-heading"
+          className="text-base font-display font-bold text-primary mb-1"
+        >
+          {t.settings.profile.title}
+        </h2>
+        <p className="text-sm text-secondary mb-4">
+          {t.settings.profile.description}
+        </p>
+        <div className="flex flex-wrap items-center gap-3 max-w-md">
+          <label htmlFor="settings-user-name" className="sr-only">
+            {t.settings.profile.label}
+          </label>
+          <input
+            id="settings-user-name"
+            type="text"
+            value={nameInput}
+            placeholder={t.settings.profile.placeholder}
+            onChange={(e) => setNameInput(e.target.value)}
+            onBlur={() => {
+              void setUserName(nameInput);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                void setUserName(nameInput);
+              }
+            }}
+            className="flex-1 rounded-full border border-subtle bg-surface-muted px-4 py-2 text-sm text-primary placeholder:text-muted"
+          />
+          <button
+            type="button"
+            onClick={() => {
+              void setUserName(nameInput);
+            }}
+            className="rounded-full bg-accent-primary px-4 py-2 text-xs font-semibold text-accent-foreground"
+          >
+            {t.app.save}
+          </button>
+        </div>
+      </section>
 
       {/* Sélecteur de thème Clair / Sombre / Système (ACC-2) */}
       <section
         aria-labelledby="appearance-heading"
-        className="rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900"
+        className="rounded-3xl border border-subtle bg-surface p-6"
       >
         <div className="mb-4">
           <h2
             id="appearance-heading"
-            className="text-base font-semibold text-slate-900 dark:text-slate-100"
+            className="text-base font-display font-bold text-primary"
           >
             {t.settings.appearance.title}
           </h2>
-          <p className="text-sm text-slate-600 dark:text-slate-300">
+          <p className="text-sm text-secondary">
             {t.settings.appearance.description}
           </p>
         </div>
@@ -81,7 +141,7 @@ export const SettingsPage: React.FC = () => {
         <div
           role="radiogroup"
           aria-label={t.settings.appearance.groupLabel}
-          className="grid grid-cols-1 sm:grid-cols-3 gap-4"
+          className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6"
         >
           {themeOptions.map((option) => {
             const isSelected = theme === option.mode;
@@ -95,17 +155,50 @@ export const SettingsPage: React.FC = () => {
                 onClick={() => {
                   void setTheme(option.mode);
                 }}
-                className={`flex flex-col items-start gap-2 rounded-xl border-2 p-4 text-left transition-colors ${
+                className={`flex flex-col items-start gap-2 rounded-2xl border p-4 text-left transition-colors ${
                   isSelected
-                    ? 'border-blue-600 bg-blue-50/70 text-slate-900 dark:border-blue-400 dark:bg-blue-950/50 dark:text-slate-100'
-                    : 'border-slate-200 bg-slate-50/60 text-slate-800 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-800/40 dark:text-slate-200 dark:hover:bg-slate-800'
+                    ? 'border-accent-primary bg-surface-muted text-primary'
+                    : 'border-subtle bg-surface text-secondary hover:bg-surface-muted'
                 }`}
               >
-                <div className="flex items-center gap-2 font-semibold text-sm">
+                <div className="flex items-center gap-2 font-semibold text-sm text-primary">
                   {option.icon}
                   <span>{option.label}</span>
                 </div>
-                <span className="text-xs text-slate-600 dark:text-slate-300">{option.hint}</span>
+                <span className="text-xs text-secondary">{option.hint}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Sélecteur de palette intégrée */}
+        <div
+          role="radiogroup"
+          aria-label={t.settings.appearance.paletteGroupLabel}
+          className="grid grid-cols-1 sm:grid-cols-3 gap-4"
+        >
+          {palettes.map((palette) => {
+            const isSelected = activePaletteId === palette.id;
+            return (
+              <button
+                key={palette.id}
+                type="button"
+                role="radio"
+                aria-checked={isSelected}
+                data-testid={`palette-option-${palette.id}`}
+                onClick={() => {
+                  void setActivePaletteId(palette.id);
+                }}
+                className={`flex items-center justify-between gap-2 rounded-2xl border p-3.5 text-left transition-colors ${
+                  isSelected
+                    ? 'border-accent-primary bg-surface-muted text-primary'
+                    : 'border-subtle bg-surface text-secondary hover:bg-surface-muted'
+                }`}
+              >
+                <span className="flex items-center gap-2 text-sm font-semibold text-primary">
+                  <Palette className="h-4 w-4" aria-hidden="true" />
+                  {palette.name}
+                </span>
               </button>
             );
           })}
@@ -113,7 +206,7 @@ export const SettingsPage: React.FC = () => {
 
         <p
           data-testid="active-theme-indicator"
-          className="mt-4 text-xs font-medium text-slate-600 dark:text-slate-300"
+          className="mt-4 text-xs font-medium text-secondary"
         >
           {t.settings.appearance.activeTheme} <span className="font-mono">{theme}</span> (
           <span className="font-mono">{resolvedTheme}</span>)
@@ -123,31 +216,31 @@ export const SettingsPage: React.FC = () => {
       {/* État du socle SQLite local-first */}
       <section
         aria-labelledby="storage-heading"
-        className="rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900"
+        className="rounded-3xl border border-subtle bg-surface p-6"
       >
         <h2
           id="storage-heading"
-          className="text-base font-semibold text-slate-900 dark:text-slate-100 mb-3"
+          className="text-base font-display font-bold text-primary mb-3"
         >
           {t.settings.storage.title}
         </h2>
         <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-          <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/60">
-            <dt className="text-xs text-slate-600 dark:text-slate-400">
+          <div className="rounded-2xl bg-surface-muted p-4">
+            <dt className="text-xs text-secondary">
               {t.settings.storage.schemaVersion}
             </dt>
-            <dd className="font-semibold text-slate-900 dark:text-slate-100">
-              v{dbStatus?.schema_version ?? 1}
+            <dd className="font-semibold text-primary">
+              v{dbStatus?.schema_version ?? 2}
             </dd>
           </div>
-          <div className="rounded-lg bg-slate-50 p-3 dark:bg-slate-800/60">
-            <dt className="text-xs text-slate-600 dark:text-slate-400">
+          <div className="rounded-2xl bg-surface-muted p-4">
+            <dt className="text-xs text-secondary">
               {t.settings.storage.categoriesCount}
             </dt>
-            <dd className="font-semibold text-slate-900 dark:text-slate-100">{categoryCount}</dd>
+            <dd className="font-semibold text-primary">{categoryCount}</dd>
           </div>
         </dl>
-        <p className="mt-3 text-xs text-slate-600 dark:text-slate-400">
+        <p className="mt-3 text-xs text-secondary">
           {t.settings.storage.syncReady}
         </p>
       </section>

@@ -26,6 +26,9 @@ export const AppContent: React.FC = () => {
       } else if (event.key === '3') {
         event.preventDefault();
         setActivePage('agenda');
+      } else if (event.key === '4') {
+        event.preventDefault();
+        setActivePage('settings');
       }
     };
 
@@ -34,10 +37,10 @@ export const AppContent: React.FC = () => {
   }, []);
 
   return (
-    <div className="flex min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+    <div className="flex min-h-screen bg-canvas text-primary font-sans">
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-lg focus:bg-blue-600 focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-white"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-xl focus:bg-accent-primary focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-accent-foreground"
       >
         {t.app.skipToContent}
       </a>
