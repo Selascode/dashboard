@@ -1,7 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Monitor, Moon, Palette, Sun } from 'lucide-react';
+import { Calendar, Monitor, Moon, Palette, Sun } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
-import { DbStatus, getCategories, getDbStatus, ThemeMode } from '../lib/db';
+import {
+  DateFormat,
+  DbStatus,
+  getCategories,
+  getDbStatus,
+  ThemeMode,
+} from '../lib/db';
 import { useTranslations } from '../i18n';
 
 export const SettingsPage: React.FC = () => {
@@ -15,6 +21,8 @@ export const SettingsPage: React.FC = () => {
     palettes,
     userName,
     setUserName,
+    dateFormat,
+    setDateFormat,
   } = useTheme();
   const [dbStatus, setDbStatus] = useState<DbStatus | null>(null);
   const [categoryCount, setCategoryCount] = useState<number>(0);
@@ -63,6 +71,28 @@ export const SettingsPage: React.FC = () => {
       label: t.settings.appearance.system,
       hint: t.settings.appearance.systemHint,
       icon: <Monitor className="h-5 w-5" aria-hidden="true" />,
+    },
+  ];
+
+  const dateFormatOptions: Array<{
+    format: DateFormat;
+    label: string;
+    hint: string;
+  }> = [
+    {
+      format: 'DD-MM-YYYY',
+      label: t.settings.dateFormat.ddmmyyyy,
+      hint: t.settings.dateFormat.ddmmyyyyHint,
+    },
+    {
+      format: 'YYYY-MM-DD',
+      label: t.settings.dateFormat.yyyymmdd,
+      hint: t.settings.dateFormat.yyyymmddHint,
+    },
+    {
+      format: 'MM-DD-YYYY',
+      label: t.settings.dateFormat.mmddyyyy,
+      hint: t.settings.dateFormat.mmddyyyyHint,
     },
   ];
 
@@ -225,6 +255,58 @@ export const SettingsPage: React.FC = () => {
           {t.settings.appearance.activeTheme} <span className="font-mono">{theme}</span> (
           <span className="font-mono">{resolvedTheme}</span>)
         </p>
+      </section>
+
+      {/* Sélecteur de format de date (DD-MM-YYYY par défaut, YYYY-MM-DD, MM-DD-YYYY) */}
+      <section
+        aria-labelledby="date-format-heading"
+        data-testid="settings-date-format-section"
+        className="rounded-3xl border border-subtle bg-surface p-6"
+      >
+        <div className="mb-4">
+          <h2
+            id="date-format-heading"
+            className="text-base font-display font-bold text-primary"
+          >
+            {t.settings.dateFormat.title}
+          </h2>
+          <p className="text-sm text-secondary">
+            {t.settings.dateFormat.description}
+          </p>
+        </div>
+
+        <div
+          role="radiogroup"
+          aria-label={t.settings.dateFormat.groupLabel}
+          className="grid grid-cols-1 sm:grid-cols-3 gap-4"
+        >
+          {dateFormatOptions.map((option) => {
+            const isSelected = dateFormat === option.format;
+            return (
+              <button
+                key={option.format}
+                type="button"
+                role="radio"
+                aria-checked={isSelected}
+                data-testid={`date-format-option-${option.format}`}
+                onClick={() => {
+                  void setDateFormat(option.format);
+                }}
+                className={`flex flex-col items-start gap-2 rounded-2xl border p-4 text-left transition-colors ${
+                  isSelected
+                    ? 'border-accent-primary bg-surface-muted text-primary'
+                    : 'border-subtle bg-surface text-secondary hover:bg-surface-muted'
+                }`}
+              >
+                <div className="flex items-center gap-2 font-semibold text-sm text-primary">
+                  <Calendar className="h-4 w-4 shrink-0" aria-hidden="true" />
+                  <span>{option.label}</span>
+                </div>
+                <span className="text-xs text-secondary">{option.hint}</span>
+              </button>
+            );
+          })}
+        </div>
       </section>
 
       {/* État du socle SQLite local-first */}

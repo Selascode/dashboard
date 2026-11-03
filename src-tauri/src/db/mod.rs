@@ -19,6 +19,11 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "002_ui_design_system.sql",
         include_str!("../../migrations/002_ui_design_system.sql"),
     ),
+    (
+        3,
+        "003_settings_and_quick_capture.sql",
+        include_str!("../../migrations/003_settings_and_quick_capture.sql"),
+    ),
 ];
 
 pub const ALL_TABLES: &[&str] = &[
@@ -463,6 +468,26 @@ pub fn upsert_setting(conn: &Connection, key: &str, value_json: &str) -> Result<
         if !matches!(normalized, "light" | "dark" | "system") {
             return Err(DbError::Validation(format!(
                 "Valeur de thème invalide '{}'. Valeurs autorisées : light, dark, system.",
+                normalized
+            )));
+        }
+    }
+
+    if key == "date_format" {
+        let normalized = value_json.trim().trim_matches('"');
+        if !matches!(normalized, "DD-MM-YYYY" | "MM-DD-YYYY" | "YYYY-MM-DD") {
+            return Err(DbError::Validation(format!(
+                "Format de date invalide '{}'. Valeurs autorisées : DD-MM-YYYY, MM-DD-YYYY, YYYY-MM-DD.",
+                normalized
+            )));
+        }
+    }
+
+    if key == "briefing_mode" {
+        let normalized = value_json.trim().trim_matches('"');
+        if !matches!(normalized, "first_open" | "fixed_time") {
+            return Err(DbError::Validation(format!(
+                "Mode de briefing invalide '{}'. Valeurs autorisées : first_open, fixed_time.",
                 normalized
             )));
         }
@@ -1150,12 +1175,12 @@ mod tests {
         assert_eq!(purge_report.total_purged, 0);
         assert_eq!(
             get_current_schema_version(&conn).expect("version du schéma"),
-            2
+            3
         );
 
         verify_schema_integrity(&conn).expect("intégrité du schéma valide");
 
-        // Vérifier les clés settings du LOT A.1
+        // Vérifier les clés settings du LOT A.1 et Migration 003
         let theme = query_setting(&conn, "theme")
             .expect("lecture theme")
             .expect("theme existe");
@@ -1163,6 +1188,21 @@ mod tests {
             theme.value_json.as_str(),
             "\"system\"" | "\"light\"" | "\"dark\""
         ));
+
+        let date_format = query_setting(&conn, "date_format")
+            .expect("lecture date_format")
+            .expect("date_format existe");
+        assert_eq!(date_format.value_json, "\"DD-MM-YYYY\"");
+
+        let panel_collapsed = query_setting(&conn, "quick_capture_panel_collapsed")
+            .expect("lecture quick_capture_panel_collapsed")
+            .expect("quick_capture_panel_collapsed existe");
+        assert_eq!(panel_collapsed.value_json, "false");
+
+        let briefing_mode = query_setting(&conn, "briefing_mode")
+            .expect("lecture briefing_mode")
+            .expect("briefing_mode existe");
+        assert_eq!(briefing_mode.value_json, "\"first_open\"");
 
         let active_palette = query_setting(&conn, "active_palette")
             .expect("lecture active_palette")
@@ -1206,7 +1246,7 @@ mod tests {
         )
         .expect("insertion tâche v2");
 
-        let migrations_v3: &[(i64, &str, &str)] = &[
+        let migrations_v4: &[(i64, &str, &str)] = &[
             (
                 1,
                 "001_init.sql",
@@ -1219,13 +1259,18 @@ mod tests {
             ),
             (
                 3,
-                "003_test_setting.sql",
-                "INSERT INTO settings (key, value_json, updated_at) VALUES ('migration_v3_flag', 'true', '2026-11-01T12:00:00Z');",
+                "003_settings_and_quick_capture.sql",
+                include_str!("../../migrations/003_settings_and_quick_capture.sql"),
+            ),
+            (
+                4,
+                "004_test_setting.sql",
+                "INSERT INTO settings (key, value_json, updated_at) VALUES ('migration_v4_flag', 'true', '2026-11-01T12:00:00Z');",
             ),
         ];
 
-        let created_backups = apply_migrations_with_list(&mut conn, Some(&db_path), migrations_v3)
-            .expect("application migration v3 avec backup");
+        let created_backups = apply_migrations_with_list(&mut conn, Some(&db_path), migrations_v4)
+            .expect("application migration v4 avec backup");
 
         assert_eq!(created_backups.len(), 1);
         let backup_path = &created_backups[0];
@@ -1233,7 +1278,7 @@ mod tests {
 
         let backup_conn = Connection::open(backup_path).expect("ouverture du backup SQLite");
         let backup_version = get_current_schema_version(&backup_conn).expect("version backup");
-        assert_eq!(backup_version, 2);
+        assert_eq!(backup_version, 3);
 
         let task_title: String = backup_conn
             .query_row(
@@ -1244,9 +1289,9 @@ mod tests {
             .expect("tâche présente dans le backup");
         assert_eq!(task_title, "Tâche avant migration v3");
 
-        let v3_setting =
-            query_setting(&backup_conn, "migration_v3_flag").expect("lecture setting backup");
-        assert!(v3_setting.is_none());
+        let v4_setting =
+            query_setting(&backup_conn, "migration_v4_flag").expect("lecture setting backup");
+        assert!(v4_setting.is_none());
     }
 
     #[test]
@@ -1447,5 +1492,20 @@ mod tests {
         let updated_name =
             upsert_setting(&conn, "user_name", "\"Selasi\"").expect("mise à jour user_name");
         assert_eq!(updated_name.value_json, "\"Selasi\"");
+
+        let updated_date_format = upsert_setting(&conn, "date_format", "\"YYYY-MM-DD\"")
+            .expect("mise à jour date_format");
+        assert_eq!(updated_date_format.value_json, "\"YYYY-MM-DD\"");
+
+        let invalid_date_format = upsert_setting(&conn, "date_format", "\"YYYY/MM/DD\"");
+        assert!(
+            invalid_date_format.is_err(),
+            "Un format de date hors DD-MM-YYYY|MM-DD-YYYY|YYYY-MM-DD doit être rejeté"
+        );
+
+        let updated_collapsed =
+            upsert_setting(&conn, "quick_capture_panel_collapsed", "true")
+                .expect("mise à jour quick_capture_panel_collapsed");
+        assert_eq!(updated_collapsed.value_json, "true");
     }
 }

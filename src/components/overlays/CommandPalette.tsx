@@ -1,9 +1,11 @@
 import React, { useEffect, useRef } from 'react';
 import { Command } from 'cmdk';
 import { Search, Sparkles } from 'lucide-react';
+import { useTheme } from '../../context/ThemeContext';
 import { useTranslations } from '../../i18n';
 import { COMMAND_REGISTRY, CommandId } from '../../lib/commands';
 import { TaskRecord } from '../../lib/db';
+import { formatDateByPreference } from '../../lib/quick-parser';
 
 interface CommandPaletteProps {
   open: boolean;
@@ -23,6 +25,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   onSelectTemplate,
 }) => {
   const t = useTranslations();
+  const { dateFormat } = useTheme();
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -183,7 +186,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                   >
                     <span>{task.title}</span>
                     {task.due_date && (
-                      <span className="text-xs text-secondary">{task.due_date}</span>
+                      <span className="text-xs text-secondary">
+                        {formatDateByPreference(task.due_date, dateFormat)}
+                      </span>
                     )}
                   </Command.Item>
                 ))}

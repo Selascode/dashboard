@@ -13,7 +13,36 @@ use db::{
     UpdateTaskInput, ALL_TABLES, SYNCHRONIZABLE_TABLES,
 };
 use std::sync::Mutex;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+
+pub const DEFAULT_QUICK_CAPTURE_SHORTCUT: &str = "CommandOrControl+Shift+Space";
+pub const QUICK_CAPTURE_CLI_FLAG: &str = "--quick-capture";
+pub const QUICK_CAPTURE_OPEN_EVENT: &str = "quick-capture:open";
+
+/// Détecte si l'argument CLI `--quick-capture` est présent (repli natif Wayland / Linux [CAP-1, Section 10]).
+pub fn has_quick_capture_flag<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    args.into_iter()
+        .any(|arg| arg.as_ref().trim() == QUICK_CAPTURE_CLI_FLAG)
+}
+
+/// Ramène la fenêtre de capture rapide (ou la fenêtre principale) au premier plan en < 300 ms
+/// et émet l'événement `quick-capture:open` vers l'interface React [CAP-1, PRF-1].
+pub fn trigger_quick_capture_window(app: &tauri::AppHandle) {
+    if let Some(window) = app
+        .get_webview_window("quick-capture")
+        .or_else(|| app.get_webview_window("main"))
+    {
+        let _ = window.show();
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+    let _ = app.emit(QUICK_CAPTURE_OPEN_EVENT, ());
+}
 
 #[tauri::command]
 fn get_settings(state: State<'_, AppDbState>) -> Result<Vec<Setting>, String> {
@@ -173,18 +202,61 @@ fn get_db_status(state: State<'_, AppDbState>) -> Result<DbStatus, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if has_quick_capture_flag(&argv) {
+                trigger_quick_capture_window(app);
+            } else if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        trigger_quick_capture_window(app);
+                    }
+                })
+                .build(),
+        )
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             let db_path = app_data_dir.join("dashboard.db");
             let (conn, last_purge_report) = initialize_database(&db_path)
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
 
+            let configured_shortcut = query_setting(&conn, "global_capture_shortcut")
+                .ok()
+                .flatten()
+                .map(|s| s.value_json.trim().trim_matches('"').to_string())
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| DEFAULT_QUICK_CAPTURE_SHORTCUT.to_string());
+
             app.manage(AppDbState {
                 conn: Mutex::new(conn),
                 db_path,
                 last_purge_report,
             });
+
+            // Enregistrement du raccourci global (Windows / macOS / Linux X11 [CAP-1]).
+            // Sous Ubuntu Wayland, si le compositeur bloque l'enregistrement global XDG,
+            // on journalise un avertissement sans interrompre le démarrage : le repli CLI
+            // `--quick-capture` via `tauri-plugin-single-instance` prend alors le relais.
+            if let Err(err) = app
+                .global_shortcut()
+                .register(configured_shortcut.as_str())
+            {
+                eprintln!(
+                    "[CAP-1] Raccourci global '{}' non enregistré sur cette session (Wayland probable) : {}. Utilisez l'argument CLI `{}`.",
+                    configured_shortcut, err, QUICK_CAPTURE_CLI_FLAG
+                );
+            }
+
+            if has_quick_capture_flag(std::env::args()) {
+                trigger_quick_capture_window(app.handle());
+            }
 
             Ok(())
         })
@@ -211,4 +283,28 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("Erreur lors du démarrage de l'application Tauri");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{has_quick_capture_flag, DEFAULT_QUICK_CAPTURE_SHORTCUT, QUICK_CAPTURE_CLI_FLAG};
+
+    #[test]
+    fn test_has_quick_capture_flag_detection() {
+        assert!(has_quick_capture_flag([
+            "productivity-dashboard",
+            "--quick-capture"
+        ]));
+        assert!(has_quick_capture_flag([
+            "/usr/bin/productivity-dashboard",
+            "--other",
+            " --quick-capture "
+        ]));
+        assert!(!has_quick_capture_flag(["productivity-dashboard"]));
+        assert_eq!(QUICK_CAPTURE_CLI_FLAG, "--quick-capture");
+        assert_eq!(
+            DEFAULT_QUICK_CAPTURE_SHORTCUT,
+            "CommandOrControl+Shift+Space"
+        );
+    }
 }

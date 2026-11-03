@@ -4,12 +4,9 @@ import { Topbar } from './components/layout/Topbar';
 import { CommandPalette } from './components/overlays/CommandPalette';
 import { ShortcutsHelpModal } from './components/overlays/ShortcutsHelpModal';
 import { ThemeProvider } from './context/ThemeContext';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useTranslations } from './i18n';
-import {
-  AppScreenId,
-  CommandId,
-  resolveCommandFromKeyboardEvent,
-} from './lib/commands';
+import { AppScreenId, CommandId } from './lib/commands';
 import { TaskRecord, listTasks } from './lib/db';
 import { AgendaPage } from './pages/AgendaPage';
 import { BriefingPage } from './pages/BriefingPage';
@@ -170,22 +167,10 @@ export const AppContent: React.FC = () => {
     ],
   );
 
-  useEffect(() => {
-    const handleGlobalKeyDown = (event: KeyboardEvent) => {
-      const cmdId = resolveCommandFromKeyboardEvent(event);
-      if (!cmdId) {
-        return;
-      }
-      if (cmdId === 'tasks.inline_add' && activeScreen !== 'tasks') {
-        return;
-      }
-      event.preventDefault();
-      executeCommand(cmdId);
-    };
-
-    window.addEventListener('keydown', handleGlobalKeyDown);
-    return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [activeScreen, executeCommand]);
+  useKeyboardShortcuts({
+    activeScreen,
+    onExecuteCommand: executeCommand,
+  });
 
   const activeSidebarPage: NavPage =
     activeScreen === 'briefing' ? previousScreen : activeScreen;

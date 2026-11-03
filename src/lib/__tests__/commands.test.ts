@@ -156,4 +156,129 @@ describe('Registre unique de commandes (src/lib/commands.ts)', () => {
       }),
     ).toBeNull();
   });
+
+  it('résout Ctrl+1..4 via e.code (Digit1..Digit4) sur clavier AZERTY (&, é, ", \') et via le pavé numérique (Numpad1..Numpad4) (ACC-1, CMD-1)', () => {
+    // Clavier AZERTY sans Shift : key vaut &, é, ", ' mais code vaut Digit1..Digit4
+    expect(
+      resolveCommandFromKeyboardEvent({
+        key: '&',
+        code: 'Digit1',
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false,
+        target: null,
+      }),
+    ).toBe('nav.dashboard');
+
+    expect(
+      resolveCommandFromKeyboardEvent({
+        key: 'é',
+        code: 'Digit2',
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false,
+        target: null,
+      }),
+    ).toBe('nav.tasks');
+
+    expect(
+      resolveCommandFromKeyboardEvent({
+        key: '"',
+        code: 'Digit3',
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false,
+        target: null,
+      }),
+    ).toBe('nav.agenda');
+
+    expect(
+      resolveCommandFromKeyboardEvent({
+        key: "'",
+        code: 'Digit4',
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false,
+        target: null,
+      }),
+    ).toBe('nav.settings');
+
+    // Pavé numérique : Numpad1..Numpad4 (avec Ctrl ou Meta)
+    expect(
+      resolveCommandFromKeyboardEvent({
+        key: '1',
+        code: 'Numpad1',
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false,
+        target: null,
+      }),
+    ).toBe('nav.dashboard');
+
+    expect(
+      resolveCommandFromKeyboardEvent({
+        key: 'End',
+        code: 'Numpad1',
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false,
+        target: null,
+      }),
+    ).toBe('nav.dashboard');
+
+    expect(
+      resolveCommandFromKeyboardEvent({
+        key: '2',
+        code: 'Numpad2',
+        ctrlKey: false,
+        metaKey: true,
+        altKey: false,
+        shiftKey: false,
+        target: null,
+      }),
+    ).toBe('nav.tasks');
+
+    expect(
+      resolveCommandFromKeyboardEvent({
+        key: '3',
+        code: 'Numpad3',
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false,
+        target: null,
+      }),
+    ).toBe('nav.agenda');
+
+    expect(
+      resolveCommandFromKeyboardEvent({
+        key: '4',
+        code: 'Numpad4',
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false,
+        target: null,
+      }),
+    ).toBe('nav.settings');
+
+    // Ignore si altKey est actif (ex: AltGr sur AZERTY)
+    expect(
+      resolveCommandFromKeyboardEvent({
+        key: 'é',
+        code: 'Digit2',
+        ctrlKey: true,
+        metaKey: false,
+        altKey: true,
+        shiftKey: false,
+        target: null,
+      }),
+    ).toBeNull();
+  });
 });

@@ -6,6 +6,8 @@ import {
   LayoutGrid,
   List,
   MoreHorizontal,
+  PanelRightClose,
+  PanelRightOpen,
   Plus,
   Scan,
   Search,
@@ -15,7 +17,8 @@ import {
   X,
 } from 'lucide-react';
 import { UndoAction } from '../App';
-import { useTranslations } from '../i18n';
+import { useTheme } from '../context/ThemeContext';
+import { formatTranslation, useTranslations } from '../i18n';
 import {
   CategoryRecord,
   FocusItemRecord,
@@ -33,10 +36,12 @@ import {
   updateTask,
 } from '../lib/db';
 import {
+  formatDateByPreference,
+  formatDueDateDisplay,
   formatDurationShort,
   formatEditorialDateFr,
-  formatShortDueDateFr,
-  parseQuickTaskSyntax,
+  getQuickCaptureDateExample,
+  parseQuickCapture,
 } from '../lib/quick-parser';
 
 export interface TasksPageProps {
@@ -49,6 +54,7 @@ export interface TasksPageProps {
 }
 
 const REFERENCE_TODAY = '2026-11-02';
+const LONG_TEXT_THRESHOLD = 48;
 
 export const TasksPage: React.FC<TasksPageProps> = ({
   quickAddFocusTrigger = 0,
@@ -59,6 +65,11 @@ export const TasksPage: React.FC<TasksPageProps> = ({
   onPushUndo,
 }) => {
   const t = useTranslations();
+  const {
+    dateFormat,
+    quickCapturePanelCollapsed: isRightPanelCollapsed,
+    setQuickCapturePanelCollapsed,
+  } = useTheme();
 
   const [categories, setCategories] = useState<CategoryRecord[]>([]);
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
@@ -75,8 +86,37 @@ export const TasksPage: React.FC<TasksPageProps> = ({
   );
   const [quickInputValue, setQuickInputValue] = useState<string>('');
   const [focusErrorBanner, setFocusErrorBanner] = useState<string | null>(null);
+  const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const quickInputRef = useRef<HTMLInputElement | null>(null);
+
+  const expandRightPanelIfNeeded = useCallback(() => {
+    if (isRightPanelCollapsed) {
+      void setQuickCapturePanelCollapsed(false);
+    }
+  }, [isRightPanelCollapsed, setQuickCapturePanelCollapsed]);
+
+  const handleSelectTask = useCallback(
+    (taskId: string) => {
+      setSelectedTaskId(taskId);
+      expandRightPanelIfNeeded();
+    },
+    [expandRightPanelIfNeeded],
+  );
+
+  const toggleTaskExpand = useCallback((taskId: string) => {
+    setExpandedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) {
+        next.delete(taskId);
+      } else {
+        next.add(taskId);
+      }
+      return next;
+    });
+  }, []);
 
   const loadData = useCallback(async () => {
     const [loadedCategories, loadedTasks, loadedFocus] = await Promise.all([
@@ -96,22 +136,25 @@ export const TasksPage: React.FC<TasksPageProps> = ({
   useEffect(() => {
     if (initialSelectedTaskId) {
       setSelectedTaskId(initialSelectedTaskId);
+      expandRightPanelIfNeeded();
     }
-  }, [initialSelectedTaskId]);
+  }, [initialSelectedTaskId, expandRightPanelIfNeeded]);
 
   useEffect(() => {
     if (quickAddFocusTrigger > 0) {
+      expandRightPanelIfNeeded();
       quickInputRef.current?.focus();
     }
-  }, [quickAddFocusTrigger]);
+  }, [quickAddFocusTrigger, expandRightPanelIfNeeded]);
 
   useEffect(() => {
     if (prefillText) {
+      expandRightPanelIfNeeded();
       setQuickInputValue(prefillText);
       quickInputRef.current?.focus();
       onClearPrefill?.();
     }
-  }, [prefillText, onClearPrefill]);
+  }, [prefillText, onClearPrefill, expandRightPanelIfNeeded]);
 
   const categoryById = useMemo(
     () => new Map<string, CategoryRecord>(categories.map((c) => [c.id, c])),
@@ -203,19 +246,21 @@ export const TasksPage: React.FC<TasksPageProps> = ({
     if (!quickInputValue.trim()) {
       return null;
     }
-    return parseQuickTaskSyntax(quickInputValue, categories, REFERENCE_TODAY);
-  }, [categories, quickInputValue]);
+    return parseQuickCapture(quickInputValue, categories, {
+      now: REFERENCE_TODAY,
+      dateFormat,
+    });
+  }, [categories, dateFormat, quickInputValue]);
 
   const handleQuickAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!quickInputValue.trim()) {
       return;
     }
-    const parsed = parseQuickTaskSyntax(
-      quickInputValue,
-      categories,
-      REFERENCE_TODAY,
-    );
+    const parsed = parseQuickCapture(quickInputValue, categories, {
+      now: REFERENCE_TODAY,
+      dateFormat,
+    });
     const fallbackCategory =
       selectedCategoryId !== 'all' ? selectedCategoryId : 'cat-inbox';
 
@@ -239,7 +284,7 @@ export const TasksPage: React.FC<TasksPageProps> = ({
 
     setQuickInputValue('');
     await loadData();
-    setSelectedTaskId(created.id);
+    handleSelectTask(created.id);
   };
 
   const handleToggleComplete = async (task: TaskRecord) => {
@@ -295,12 +340,22 @@ export const TasksPage: React.FC<TasksPageProps> = ({
     const isOverdue =
       !isDone && task.due_date !== null && task.due_date < REFERENCE_TODAY;
     const isSelected = selectedTaskId === task.id;
+    const isExpanded = expandedTaskIds.has(task.id);
     const durationText = formatDurationShort(task.estimated_minutes);
     const subtitleParts = [task.notes, durationText].filter(Boolean);
-    const dateLabel = formatShortDueDateFr(task.due_date, REFERENCE_TODAY, {
-      today: t.tasks.dueToday,
-      toPlan: t.tasks.dueToPlan,
-    });
+    const subtitleText = subtitleParts.join(' · ');
+    const isLongText =
+      task.title.length > LONG_TEXT_THRESHOLD ||
+      subtitleText.length > LONG_TEXT_THRESHOLD;
+    const dateLabel = formatDueDateDisplay(
+      task.due_date,
+      REFERENCE_TODAY,
+      {
+        today: t.tasks.dueToday,
+        toPlan: t.tasks.dueToPlan,
+      },
+      dateFormat,
+    );
 
     return (
       <li
@@ -329,25 +384,52 @@ export const TasksPage: React.FC<TasksPageProps> = ({
             {isDone && <Check className="h-3 w-3" aria-hidden="true" />}
           </button>
 
-          <button
-            type="button"
-            data-testid={`task-select-${task.id}`}
-            onClick={() => setSelectedTaskId(task.id)}
-            className="min-w-0 flex-1 text-left focus:outline-none"
-          >
-            <p
-              className={`text-sm font-semibold truncate ${
-                isDone ? 'line-through text-muted' : 'text-primary'
-              }`}
+          <div className="min-w-0 flex-1">
+            <button
+              type="button"
+              data-testid={`task-select-${task.id}`}
+              onClick={() => handleSelectTask(task.id)}
+              className="w-full text-left focus:outline-none"
             >
-              {task.title}
-            </p>
-            {subtitleParts.length > 0 && (
-              <p className="text-xs text-secondary truncate mt-0.5">
-                {subtitleParts.join(' · ')}
+              <p
+                data-testid={`task-title-${task.id}`}
+                className={`text-sm font-semibold ${
+                  isExpanded
+                    ? 'whitespace-normal break-words'
+                    : 'line-clamp-1'
+                } ${isDone ? 'line-through text-muted' : 'text-primary'}`}
+              >
+                {task.title}
               </p>
+              {subtitleParts.length > 0 && (
+                <p
+                  data-testid={`task-subtitle-${task.id}`}
+                  className={`text-xs text-secondary mt-0.5 ${
+                    isExpanded
+                      ? 'whitespace-normal break-words'
+                      : 'line-clamp-1'
+                  }`}
+                >
+                  {subtitleText}
+                </p>
+              )}
+            </button>
+
+            {isLongText && (
+              <button
+                type="button"
+                data-testid={`task-expand-btn-${task.id}`}
+                aria-expanded={isExpanded}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleTaskExpand(task.id);
+                }}
+                className="mt-1 inline-flex items-center text-[11px] font-semibold text-secondary hover:text-primary transition-colors"
+              >
+                {isExpanded ? t.tasks.seeLess : t.tasks.seeMore}
+              </button>
             )}
-          </button>
+          </div>
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
@@ -380,6 +462,7 @@ export const TasksPage: React.FC<TasksPageProps> = ({
               </span>
             )}
             <span
+              data-testid={`task-due-label-${task.id}`}
               className={`text-[11px] ${
                 isOverdue
                   ? 'text-danger font-semibold'
@@ -393,7 +476,7 @@ export const TasksPage: React.FC<TasksPageProps> = ({
           <button
             type="button"
             aria-label={t.tasks.taskActionsAria}
-            onClick={() => setSelectedTaskId(task.id)}
+            onClick={() => handleSelectTask(task.id)}
             className="rounded-lg p-1 text-secondary hover:bg-surface-muted hover:text-primary transition-colors"
           >
             <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
@@ -421,7 +504,10 @@ export const TasksPage: React.FC<TasksPageProps> = ({
         <button
           type="button"
           data-testid="tasks-header-new-btn"
-          onClick={() => quickInputRef.current?.focus()}
+          onClick={() => {
+            expandRightPanelIfNeeded();
+            quickInputRef.current?.focus();
+          }}
           className="focus-pill-control inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-semibold text-primary hover:bg-surface-muted transition-colors"
         >
           <Plus className="h-3.5 w-3.5" aria-hidden="true" />
@@ -531,13 +617,15 @@ export const TasksPage: React.FC<TasksPageProps> = ({
         </div>
       )}
 
-      {/* Mise en page à deux colonnes : Carte "Mes tâches" à gauche + Détail / Rappel de syntaxe à droite */}
+      {/* Mise en page à deux colonnes : Carte "Mes tâches" à gauche + Détail / Rappel de syntaxe repliable à droite (Option B) */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
-        {/* Colonne de gauche (7 col) : Carte "Mes tâches" */}
+        {/* Colonne de gauche : Carte "Mes tâches" (7 col si panneau ouvert, 11 col si panneau replié) */}
         <section
           aria-labelledby="my-tasks-heading"
           data-testid="tasks-main-card"
-          className="focus-card-surface lg:col-span-7 rounded-3xl p-6 flex flex-col gap-5"
+          className={`focus-card-surface ${
+            isRightPanelCollapsed ? 'lg:col-span-11' : 'lg:col-span-7'
+          } rounded-3xl p-6 flex flex-col gap-5 transition-all`}
         >
           {/* En-tête de la carte "Mes tâches" */}
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -699,9 +787,9 @@ export const TasksPage: React.FC<TasksPageProps> = ({
                               onClick={() => {
                                 setSelectedCategoryId(cat.id);
                                 setViewMode('list');
-                                setSelectedTaskId(tk.id);
+                                handleSelectTask(tk.id);
                               }}
-                              className="w-full text-left text-xs font-medium text-primary truncate hover:underline"
+                              className="w-full text-left text-xs font-medium text-primary line-clamp-1 hover:underline"
                             >
                               • {tk.title}
                             </button>
@@ -806,8 +894,11 @@ export const TasksPage: React.FC<TasksPageProps> = ({
                   </span>
                 )}
                 {livePreview.dueDate && (
-                  <span className="rounded-full bg-surface-muted px-2.5 py-0.5 font-medium text-primary">
-                    @{livePreview.dueDate}
+                  <span
+                    data-testid="quick-preview-due-badge"
+                    className="rounded-full bg-surface-muted px-2.5 py-0.5 font-medium text-primary"
+                  >
+                    @{formatDateByPreference(livePreview.dueDate, dateFormat)}
                   </span>
                 )}
                 {livePreview.priority > 0 && (
@@ -830,12 +921,47 @@ export const TasksPage: React.FC<TasksPageProps> = ({
           </form>
         </section>
 
-        {/* Colonne de droite (5 col) : Détail et édition OU Rappel de syntaxe et modèles (Garde-fou de périmètre) */}
+        {/* Colonne de droite : Détail et édition OU Rappel de syntaxe et modèles (Option B : accordéon latéral repliable) */}
         <aside
           data-testid="tasks-right-panel"
-          className="focus-card-surface lg:col-span-5 rounded-3xl p-6 flex flex-col gap-5"
+          data-collapsed={isRightPanelCollapsed ? 'true' : 'false'}
+          className={`focus-card-surface ${
+            isRightPanelCollapsed
+              ? 'lg:col-span-1 p-3 flex flex-col items-center justify-between min-h-[260px]'
+              : 'lg:col-span-5 p-6 flex flex-col gap-5'
+          } rounded-3xl transition-all`}
         >
-          {selectedTask ? (
+          {isRightPanelCollapsed ? (
+            <div
+              data-testid="tasks-right-panel-collapsed-strip"
+              className="flex flex-col items-center justify-between gap-4 py-2 w-full h-full"
+            >
+              <button
+                type="button"
+                data-testid="tasks-panel-expand-btn"
+                aria-expanded={false}
+                aria-label={t.tasks.expandPanel}
+                title={t.tasks.expandPanel}
+                onClick={() => {
+                  void setQuickCapturePanelCollapsed(false);
+                }}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-subtle bg-surface-muted text-primary hover:border-accent-primary transition-colors"
+              >
+                <PanelRightOpen className="h-5 w-5" aria-hidden="true" />
+              </button>
+
+              <span
+                className="text-[11px] font-semibold uppercase tracking-wider text-secondary select-none"
+                style={{ writingMode: 'vertical-rl' }}
+              >
+                {t.tasks.collapsedPanelLabel}
+              </span>
+
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-surface-muted text-secondary">
+                <Scan className="h-4 w-4" aria-hidden="true" />
+              </span>
+            </div>
+          ) : selectedTask ? (
             /* Panneau de détail et d'édition de la tâche sélectionnée (TSK-1, TSK-2) */
             <div data-testid="task-detail-panel" className="flex flex-col gap-4">
               <div className="flex items-start justify-between gap-3">
@@ -853,15 +979,30 @@ export const TasksPage: React.FC<TasksPageProps> = ({
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  data-testid="task-detail-close-btn"
-                  onClick={() => setSelectedTaskId(null)}
-                  aria-label={t.app.close}
-                  className="rounded-full p-1.5 text-secondary hover:bg-surface-muted hover:text-primary transition-colors"
-                >
-                  <X className="h-4 w-4" aria-hidden="true" />
-                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    data-testid="tasks-panel-collapse-btn"
+                    aria-expanded={true}
+                    aria-label={t.tasks.collapsePanel}
+                    title={t.tasks.collapsePanel}
+                    onClick={() => {
+                      void setQuickCapturePanelCollapsed(true);
+                    }}
+                    className="rounded-full p-1.5 text-secondary hover:bg-surface-muted hover:text-primary transition-colors"
+                  >
+                    <PanelRightClose className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="task-detail-close-btn"
+                    onClick={() => setSelectedTaskId(null)}
+                    aria-label={t.app.close}
+                    className="rounded-full p-1.5 text-secondary hover:bg-surface-muted hover:text-primary transition-colors"
+                  >
+                    <X className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
               </div>
 
               <div className="flex flex-col gap-3">
@@ -924,7 +1065,20 @@ export const TasksPage: React.FC<TasksPageProps> = ({
                   </label>
 
                   <label className="flex flex-col gap-1 text-xs font-semibold text-secondary">
-                    <span>{t.tasks.detailPanel.fieldDueDate}</span>
+                    <span className="flex items-center justify-between gap-1">
+                      <span>{t.tasks.detailPanel.fieldDueDate}</span>
+                      {selectedTask.due_date && (
+                        <span
+                          data-testid="detail-duedate-formatted"
+                          className="font-mono text-[11px] text-primary"
+                        >
+                          {formatDateByPreference(
+                            selectedTask.due_date,
+                            dateFormat,
+                          )}
+                        </span>
+                      )}
+                    </span>
                     <input
                       type="date"
                       data-testid="detail-duedate-input"
@@ -1042,18 +1196,34 @@ export const TasksPage: React.FC<TasksPageProps> = ({
           ) : (
             /* Rappel de la syntaxe de saisie rapide & Modèles de saisie (CMD-3) quand aucune tâche n'est sélectionnée */
             <div data-testid="task-syntax-panel" className="flex flex-col gap-5">
-              <div className="flex items-start gap-3">
-                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-subtle bg-surface-muted text-primary">
-                  <Scan className="h-5 w-5" aria-hidden="true" />
-                </span>
-                <div>
-                  <h2 className="text-base font-display font-bold text-primary">
-                    {t.tasks.syntaxPanel.title}
-                  </h2>
-                  <p className="text-xs text-secondary leading-relaxed mt-0.5">
-                    {t.tasks.syntaxPanel.subtitle}
-                  </p>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-subtle bg-surface-muted text-primary">
+                    <Scan className="h-5 w-5" aria-hidden="true" />
+                  </span>
+                  <div>
+                    <h2 className="text-base font-display font-bold text-primary">
+                      {t.tasks.syntaxPanel.title}
+                    </h2>
+                    <p className="text-xs text-secondary leading-relaxed mt-0.5">
+                      {t.tasks.syntaxPanel.subtitle}
+                    </p>
+                  </div>
                 </div>
+
+                <button
+                  type="button"
+                  data-testid="tasks-panel-collapse-btn"
+                  aria-expanded={true}
+                  aria-label={t.tasks.collapsePanel}
+                  title={t.tasks.collapsePanel}
+                  onClick={() => {
+                    void setQuickCapturePanelCollapsed(true);
+                  }}
+                  className="rounded-full p-1.5 text-secondary hover:bg-surface-muted hover:text-primary transition-colors shrink-0"
+                >
+                  <PanelRightClose className="h-4 w-4" aria-hidden="true" />
+                </button>
               </div>
 
               {/* Exemple de syntaxe complet */}
@@ -1084,8 +1254,13 @@ export const TasksPage: React.FC<TasksPageProps> = ({
                     <dt className="font-mono font-semibold text-primary shrink-0">
                       {t.tasks.syntaxPanel.tokenDate}
                     </dt>
-                    <dd className="text-secondary text-right">
-                      {t.tasks.syntaxPanel.tokenDateDesc}
+                    <dd
+                      data-testid="syntax-token-date-desc"
+                      className="text-secondary text-right"
+                    >
+                      {formatTranslation(t.tasks.syntaxPanel.tokenDateDesc, {
+                        example: getQuickCaptureDateExample(dateFormat),
+                      })}
                     </dd>
                   </div>
                   <div className="py-2 flex items-center justify-between gap-3">

@@ -1,13 +1,15 @@
+import en from './en.json';
 import fr from './fr.json';
 
 export type TranslationDictionary = typeof fr;
 
-export const translations: Record<'fr', TranslationDictionary> = {
+export const translations: Record<'fr' | 'en', TranslationDictionary> = {
   fr,
+  en,
 };
 
-export function useTranslations(): TranslationDictionary {
-  return translations.fr;
+export function useTranslations(locale: 'fr' | 'en' = 'fr'): TranslationDictionary {
+  return translations[locale] ?? translations.fr;
 }
 
 export function formatTranslation(
@@ -20,4 +22,4 @@ export function formatTranslation(
   );
 }
 
-export { fr };
+export { fr, en };

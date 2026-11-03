@@ -193,13 +193,39 @@ export function isEditableElement(target: EventTarget | null): boolean {
 }
 
 /**
+ * Résout un code physique (Digit1..Digit4 ou Numpad1..Numpad4) vers le chiffre '1'..'4'.
+ * Permet aux claviers AZERTY (où les touches 1..4 sans Shift produisent &, é, ", ')
+ * ainsi qu'au pavé numérique de déclencher immédiatement Ctrl+1..4 (ACC-1, CMD-1).
+ */
+function resolveDigitKeyFromCode(code?: string): string | null {
+  switch (code) {
+    case 'Digit1':
+    case 'Numpad1':
+      return '1';
+    case 'Digit2':
+    case 'Numpad2':
+      return '2';
+    case 'Digit3':
+    case 'Numpad3':
+      return '3';
+    case 'Digit4':
+    case 'Numpad4':
+      return '4';
+    default:
+      return null;
+  }
+}
+
+/**
  * Résout une touche clavier vers l'identifiant de commande du registre unique.
  */
 export function resolveCommandFromKeyboardEvent(
   event: Pick<
     KeyboardEvent,
     'key' | 'ctrlKey' | 'metaKey' | 'altKey' | 'shiftKey' | 'target'
-  >,
+  > & {
+    code?: string;
+  },
 ): CommandId | null {
   if (event.altKey) {
     return null;
@@ -207,7 +233,11 @@ export function resolveCommandFromKeyboardEvent(
 
   const typing = isEditableElement(event.target);
   const hasModifier = Boolean(event.ctrlKey || event.metaKey);
-  const normalizedKey = event.key === 'Escape' ? 'Escape' : event.key.toLowerCase();
+  const digitFromCode = hasModifier ? resolveDigitKeyFromCode(event.code) : null;
+  const normalizedKey =
+    event.key === 'Escape'
+      ? 'Escape'
+      : digitFromCode ?? event.key.toLowerCase();
 
   for (const cmd of COMMAND_REGISTRY) {
     const { key, ctrlOrMeta, ignoreWhenTyping } = cmd.defaultShortcut;
@@ -233,7 +263,7 @@ export function resolveCommandFromKeyboardEvent(
       continue;
     }
 
-    if (ctrlOrMeta && event.shiftKey) {
+    if (ctrlOrMeta && event.shiftKey && !digitFromCode) {
       continue;
     }
 

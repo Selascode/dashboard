@@ -40,6 +40,20 @@ describe('Couche d’accès aux données unique (src/lib/db.ts)', () => {
     expect(await getSetting('custom_palettes')).toEqual([]);
     expect(await getSetting('user_name')).toBe('');
     expect(await getSettingValue('language', 'en')).toBe('fr');
+    expect(await getSetting('date_format')).toBe('DD-MM-YYYY');
+    expect(await getSetting('quick_capture_panel_collapsed')).toBe(false);
+    expect(await getSetting('briefing_mode')).toBe('first_open');
+  });
+
+  it('valide les clés date_format, quick_capture_panel_collapsed et briefing_mode', async () => {
+    await setSetting('date_format', 'YYYY-MM-DD');
+    expect(await getSetting('date_format')).toBe('YYYY-MM-DD');
+    await expect(setSetting('date_format', 'YYYY/MM/DD')).rejects.toThrow(
+      /Format de date invalide/,
+    );
+
+    await setSetting('quick_capture_panel_collapsed', true);
+    expect(await getSetting('quick_capture_panel_collapsed')).toBe(true);
   });
 
   it('expose get_setting et set_setting et valide les valeurs de theme (light|dark|system)', async () => {
@@ -182,9 +196,9 @@ describe('Couche d’accès aux données unique (src/lib/db.ts)', () => {
     expect(await listFocusItems('2026-11-02')).toHaveLength(2);
   });
 
-  it('vérifie le statut de santé de la base en version 2 et les 5 entités synchronisables [Section 6]', async () => {
+  it('vérifie le statut de santé de la base en version 3 et les 5 entités synchronisables [Section 6]', async () => {
     const status = await getDbStatus();
-    expect(status.schema_version).toBe(2);
+    expect(status.schema_version).toBe(3);
     expect(status.tables_verified).toHaveLength(8);
     expect(status.sync_entities_verified).toEqual([
       'categories',

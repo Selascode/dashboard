@@ -153,6 +153,11 @@
     "toggleFocusAdd": "Ajouter au Focus 5",
     "toggleFocusRemove": "Retirer du Focus 5",
     "taskActionsAria": "Actions de la tâche",
+    "seeMore": "Voir plus",
+    "seeLess": "Voir moins",
+    "collapsePanel": "Replier le panneau latéral",
+    "expandPanel": "Déplier le panneau Saisie rapide & Détails",
+    "collapsedPanelLabel": "Saisie rapide & Détails",
     "priorityLabels": {
       "p0": "Normale",
       "p1": "Basse (!1)",
@@ -189,7 +194,7 @@
       "tokenCategory": "#catégorie",
       "tokenCategoryDesc": "Assigne la catégorie (#ecole, #sport, #perso, #projets)",
       "tokenDate": "@date",
-      "tokenDateDesc": "Définit l’échéance (@auj, @demain, @ven, @15/11)",
+      "tokenDateDesc": "Définit l’échéance (@auj, @demain, @ven, {example})",
       "tokenPriority": "!1 à !3",
       "tokenPriorityDesc": "Définit la priorité (!3 = haute, sans jeton = 0)",
       "tokenDuration": "~durée",
@@ -256,6 +261,17 @@
       "system": "Système",
       "systemHint": "Suit automatiquement votre système d’exploitation",
       "activeTheme": "Thème appliqué :"
+    },
+    "dateFormat": {
+      "title": "Format de date d’échéance",
+      "description": "Choisissez l’ordre d’affichage et de saisie rapide des dates dans tout votre espace.",
+      "groupLabel": "Format de date",
+      "ddmmyyyy": "JJ-MM-AAAA (DD-MM-YYYY)",
+      "ddmmyyyyHint": "Jour-Mois-Année (ex: 15-11-2026) — Défaut",
+      "yyyymmdd": "AAAA-MM-JJ (YYYY-MM-DD)",
+      "yyyymmddHint": "Format international ISO (ex: 2026-11-15)",
+      "mmddyyyy": "MM-JJ-AAAA (MM-DD-YYYY)",
+      "mmddyyyyHint": "Mois-Jour-Année (ex: 11-15-2026)"
     },
     "storage": {
       "title": "Socle de données local-first (SQLite)",

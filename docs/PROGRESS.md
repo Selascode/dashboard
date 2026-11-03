@@ -37,6 +37,7 @@
 - [x] Refonte du Dashboard fidèle à `docs/ui-reference.png` avec contraste des bordures renforcé (`--border-subtle`, `.focus-card-surface`, `.focus-pill-control`) (`DSH-1`, `DSH-2`, `DSH-3`, `FOC-1`, `FOC-2`, `FOC-4`) (`feat/ui-design-system`)
 - [x] Refonte de l'écran Tâches fidèle à `docs/ui-tasks-reference.png` en remplaçant le panneau d'import d'image hors périmètre par le panneau de rappel de syntaxe / modèles (`CMD-3`) et le panneau de détail / édition (`TSK-1` à `TSK-7`, `CAP-2`) (`feat/ui-design-system`)
 - [x] Test automatisé vérifiant l'absence totale d'appel réseau (`fetch`/`XMLHttpRequest`) et de CDN externe sur le build de production (`src/__tests__/prod-no-network.test.tsx`) (`PRV-1`, `PRV-2`) (`feat/ui-design-system`)
+- [x] Analyseur de saisie rapide complet (`CAP-2`, 61 tests unitaires `QLT-1`), capture globale `Ctrl+Maj+Espace` (`CAP-1`) avec repli CLI `--quick-capture`, support clavier AZERTY/Numpad (`e.code`), panneau droit repliable Option B persisté dans SQLite, troncature `line-clamp-1` avec dépliage et format de date `DD-MM-YYYY` par défaut (`feat/ui-design-system`)
 
 ### Jalon J1 — Cœur des Tâches & Saisie Rapide (2 semaines)
 **Objectif de sortie :** Une tâche catégorisée se crée en moins de 5 secondes.
@@ -46,8 +47,8 @@
 - [x] `TSK-4` **[Must]** : Vue liste avec filtres (catégorie, statut, échéance) et tri (échéance puis priorité) (`feat/ui-design-system`)
 - [x] `TSK-6` **[Should]** : Vue par catégories (cartes colorées translucides avec contraste AA, top 3 tâches prioritaires, clic pour liste complète) (`feat/ui-design-system`)
 - [x] `TSK-7` **[Should]** : Mise en évidence visuelle des tâches échues non terminées (`feat/ui-design-system`)
-- [ ] `CAP-1` **[Must]** : Raccourci global de capture (`Ctrl+Maj+Espace` par défaut) ouvrant la mini-fenêtre en < 300 ms (`Entrée` crée, `Échap` ferme) + repli CLI sous Wayland
-- [ ] `CAP-2` **[Must]** : Analyseur de syntaxe (`#catégorie`, `@date`, `!1`–`!3`, `~durée`, `*`, échappement `\#`) avec aperçu en direct + **50+ tests unitaires** (`QLT-1`)
+- [x] `CAP-1` **[Must]** : Raccourci global de capture (`Ctrl+Maj+Espace` par défaut) ouvrant la mini-fenêtre en < 300 ms (`Entrée` crée, `Échap` ferme) + repli CLI sous Wayland (`feat/ui-design-system`)
+- [x] `CAP-2` **[Must]** : Analyseur de syntaxe (`#catégorie`, `@date`, `!1`–`!3`, `~durée`, `*`, échappement `\#`) avec aperçu en direct + **50+ tests unitaires** (`QLT-1`) (`feat/ui-design-system`)
 - [x] `CAP-3` **[Must]** : Repli sans friction vers `Inbox` si catégorie absente/inconnue, aucune boîte de dialogue bloquante (`feat/ui-design-system`)
 
 ### Jalon J2 — Focus 5, Dashboard & Sauvegarde (2 semaines)

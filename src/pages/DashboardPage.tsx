@@ -31,7 +31,10 @@ import {
   removeFocusItem,
   reorderFocusItems,
 } from '../lib/db';
-import { formatEditorialDateFr } from '../lib/quick-parser';
+import {
+  formatDateByPreference,
+  formatEditorialDateFr,
+} from '../lib/quick-parser';
 
 interface DashboardPageProps {
   onComposeFocus?: () => void;
@@ -43,6 +46,7 @@ interface DashboardPageProps {
 }
 
 const REFERENCE_TODAY = '2026-11-02';
+const LONG_TEXT_THRESHOLD = 48;
 
 export const DashboardPage: React.FC<DashboardPageProps> = ({
   onComposeFocus,
@@ -53,7 +57,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   onPushUndo,
 }) => {
   const t = useTranslations();
-  const { userName } = useTheme();
+  const { userName, dateFormat } = useTheme();
 
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [categories, setCategories] = useState<CategoryRecord[]>([]);
@@ -64,6 +68,21 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const [nowModeTaskId, setNowModeTaskId] = useState<string | null>(null);
   const [timerSeconds, setTimerSeconds] = useState<number>(25 * 60);
   const [timerRunning, setTimerRunning] = useState<boolean>(false);
+  const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+
+  const toggleTaskExpand = useCallback((taskId: string) => {
+    setExpandedTaskIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(taskId)) {
+        next.delete(taskId);
+      } else {
+        next.add(taskId);
+      }
+      return next;
+    });
+  }, []);
 
   const loadDashboardData = useCallback(async () => {
     const [loadedTasks, loadedCategories, loadedFocus] = await Promise.all([
@@ -364,13 +383,26 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   ? `var(${cat.color})`
                   : 'var(--cat-1)';
 
+                const isExpanded = expandedTaskIds.has(task.id);
+                const subtitleText = [
+                  task.notes,
+                  task.estimated_minutes
+                    ? `${task.estimated_minutes} min`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ');
+                const isLongText =
+                  task.title.length > LONG_TEXT_THRESHOLD ||
+                  subtitleText.length > LONG_TEXT_THRESHOLD;
+
                 return (
                   <li
                     key={item.id}
                     data-testid={`focus-item-${task.id}`}
                     className="flex items-center justify-between gap-3 py-3"
                   >
-                    <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex items-start gap-3 min-w-0 flex-1">
                       <button
                         type="button"
                         role="checkbox"
@@ -380,7 +412,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                         onClick={() => {
                           void handleToggleFocusTaskComplete(task);
                         }}
-                        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-colors ${
+                        className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border transition-colors ${
                           isDone
                             ? 'border-accent-primary bg-accent-primary text-accent-foreground'
                             : 'border-subtle bg-surface hover:border-accent-primary'
@@ -389,25 +421,35 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                         {isDone && <Check className="h-3 w-3" aria-hidden="true" />}
                       </button>
 
-                      <div className="min-w-0">
+                      <div className="min-w-0 flex-1">
                         <p
-                          className={`text-sm font-semibold truncate ${
-                            isDone ? 'line-through text-muted' : 'text-primary'
-                          }`}
+                          data-testid={`focus-item-title-${task.id}`}
+                          className={`text-sm font-semibold ${
+                            isExpanded ? 'whitespace-normal break-words' : 'line-clamp-1'
+                          } ${isDone ? 'line-through text-muted' : 'text-primary'}`}
                         >
                           {task.title}
                         </p>
-                        {(task.notes || task.estimated_minutes) && (
-                          <p className="text-xs text-secondary truncate">
-                            {[
-                              task.notes,
-                              task.estimated_minutes
-                                ? `${task.estimated_minutes} min`
-                                : null,
-                            ]
-                              .filter(Boolean)
-                              .join(' · ')}
+                        {subtitleText && (
+                          <p
+                            data-testid={`focus-item-subtitle-${task.id}`}
+                            className={`text-xs text-secondary ${
+                              isExpanded ? 'whitespace-normal break-words' : 'line-clamp-1'
+                            }`}
+                          >
+                            {subtitleText}
                           </p>
+                        )}
+                        {isLongText && (
+                          <button
+                            type="button"
+                            data-testid={`focus-expand-btn-${task.id}`}
+                            aria-expanded={isExpanded}
+                            onClick={() => toggleTaskExpand(task.id)}
+                            className="mt-1 inline-flex items-center text-[11px] font-semibold text-secondary hover:text-primary transition-colors"
+                          >
+                            {isExpanded ? t.tasks.seeLess : t.tasks.seeMore}
+                          </button>
                         )}
                       </div>
                     </div>
@@ -641,17 +683,18 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                         key={tk.id}
                         className="flex items-center justify-between gap-2 py-2 text-xs"
                       >
-                        <span className="font-medium text-primary truncate">
+                        <span className="font-medium text-primary line-clamp-1">
                           {tk.title}
                         </span>
                         <span
+                          data-testid={`deadline-date-${tk.id}`}
                           className={`shrink-0 font-medium ${
                             isOverdue ? 'text-danger font-semibold' : 'text-secondary'
                           }`}
                         >
                           {tk.due_date === REFERENCE_TODAY
                             ? t.tasks.dueToday
-                            : tk.due_date}
+                            : formatDateByPreference(tk.due_date, dateFormat)}
                         </span>
                       </li>
                     );

@@ -3,6 +3,9 @@ import demoSeedState from './demo-seed-state.json';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 
+export type DateFormat = 'DD-MM-YYYY' | 'MM-DD-YYYY' | 'YYYY-MM-DD';
+export type DateFormatPreference = DateFormat;
+
 export type TaskStatus = 'todo' | 'in_progress' | 'done' | 'cancelled';
 
 export type FocusOutcome = 'completed' | 'carried_over' | 'abandoned' | null;
@@ -131,12 +134,17 @@ export interface DefaultSettingsMap {
   custom_palettes: ColorPalette[];
   user_name: string;
   language: 'fr' | 'en';
+  date_format: DateFormat;
+  quick_capture_panel_collapsed: boolean;
   briefing_mode: 'first_open' | 'fixed_time';
   briefing_time: string;
   last_briefing_date: string | null;
   global_capture_shortcut: string;
   [key: string]: unknown;
 }
+
+export type AppSettings = DefaultSettingsMap;
+export type UpdateSettingsInput = Partial<DefaultSettingsMap>;
 
 const BROWSER_STORAGE_KEY = 'focus_browser_db_v2';
 
@@ -146,6 +154,8 @@ const DEFAULT_SETTINGS: DefaultSettingsMap = {
   custom_palettes: [],
   user_name: '',
   language: 'fr',
+  date_format: 'DD-MM-YYYY',
+  quick_capture_panel_collapsed: false,
   briefing_mode: 'first_open',
   briefing_time: '08:00',
   last_briefing_date: null,
@@ -632,6 +642,21 @@ export async function setSettingValue<T = unknown>(
   if (key === 'theme' && value !== 'light' && value !== 'dark' && value !== 'system') {
     throw new Error(`Valeur de thème invalide : ${String(value)}`);
   }
+  if (
+    key === 'date_format' &&
+    value !== 'DD-MM-YYYY' &&
+    value !== 'MM-DD-YYYY' &&
+    value !== 'YYYY-MM-DD'
+  ) {
+    throw new Error(`Format de date invalide : ${String(value)}`);
+  }
+  if (
+    key === 'briefing_mode' &&
+    value !== 'first_open' &&
+    value !== 'fixed_time'
+  ) {
+    throw new Error(`Mode de briefing invalide : ${String(value)}`);
+  }
   const valueJson = JSON.stringify(value);
   if (isTauriRuntime()) {
     return invoke<SettingRecord>('set_setting', {
@@ -661,6 +686,75 @@ export async function set_setting<T = unknown>(
   value: T,
 ): Promise<SettingRecord> {
   return setSettingValue(key, value);
+}
+
+export async function getAppSettings(): Promise<AppSettings> {
+  const [
+    theme,
+    active_palette,
+    custom_palettes,
+    user_name,
+    language,
+    date_format,
+    quick_capture_panel_collapsed,
+    briefing_mode,
+    briefing_time,
+    last_briefing_date,
+    global_capture_shortcut,
+  ] = await Promise.all([
+    getSettingValue<ThemeMode>('theme', DEFAULT_SETTINGS.theme),
+    getSettingValue<string>('active_palette', DEFAULT_SETTINGS.active_palette),
+    getSettingValue<ColorPalette[]>(
+      'custom_palettes',
+      DEFAULT_SETTINGS.custom_palettes,
+    ),
+    getSettingValue<string>('user_name', DEFAULT_SETTINGS.user_name),
+    getSettingValue<'fr' | 'en'>('language', DEFAULT_SETTINGS.language),
+    getSettingValue<DateFormat>('date_format', DEFAULT_SETTINGS.date_format),
+    getSettingValue<boolean>(
+      'quick_capture_panel_collapsed',
+      DEFAULT_SETTINGS.quick_capture_panel_collapsed,
+    ),
+    getSettingValue<'first_open' | 'fixed_time'>(
+      'briefing_mode',
+      DEFAULT_SETTINGS.briefing_mode,
+    ),
+    getSettingValue<string>('briefing_time', DEFAULT_SETTINGS.briefing_time),
+    getSettingValue<string | null>(
+      'last_briefing_date',
+      DEFAULT_SETTINGS.last_briefing_date,
+    ),
+    getSettingValue<string>(
+      'global_capture_shortcut',
+      DEFAULT_SETTINGS.global_capture_shortcut,
+    ),
+  ]);
+
+  return {
+    theme,
+    active_palette,
+    custom_palettes,
+    user_name,
+    language,
+    date_format,
+    quick_capture_panel_collapsed,
+    briefing_mode,
+    briefing_time,
+    last_briefing_date,
+    global_capture_shortcut,
+  };
+}
+
+export async function updateSettings(
+  input: UpdateSettingsInput,
+): Promise<SettingRecord[]> {
+  const results: SettingRecord[] = [];
+  for (const [key, value] of Object.entries(input)) {
+    if (value !== undefined) {
+      results.push(await setSettingValue(key, value));
+    }
+  }
+  return results;
 }
 
 // ============================================================================
@@ -1146,7 +1240,7 @@ export async function getDbStatus(): Promise<DbStatus> {
   }
   return {
     db_path: 'memory://dashboard.db',
-    schema_version: 2,
+    schema_version: 3,
     tables_verified: [
       'categories',
       'tasks',

@@ -2,7 +2,12 @@ import '@testing-library/jest-dom/vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import App from '../App';
-import { getSettingValue, resetMemoryFallbackStore, seedDemoData } from '../lib/db';
+import {
+  createTask,
+  getSettingValue,
+  resetMemoryFallbackStore,
+  seedDemoData,
+} from '../lib/db';
 
 if (typeof globalThis.ResizeObserver === 'undefined') {
   globalThis.ResizeObserver = class ResizeObserver {
@@ -195,5 +200,163 @@ describe('Coque, Navigation Clavier, Palette cmdk & Thèmes (Lots A & B)', () =>
     await waitFor(() => {
       expect(screen.queryByTestId('undo-toast')).not.toBeInTheDocument();
     });
+  });
+
+  it('gère les raccourcis Ctrl+1..4 sur clavier AZERTY (Digit1..Digit4 avec &, é, ", \') et pavé numérique (Numpad1..Numpad4)', async () => {
+    render(<App />);
+
+    // AZERTY Ctrl+& (Digit2 -> Tâches)
+    fireEvent.keyDown(window, { key: 'é', code: 'Digit2', ctrlKey: true });
+    expect(await screen.findByTestId('page-tasks')).toBeInTheDocument();
+
+    // AZERTY Ctrl+" (Digit3 -> Agenda)
+    fireEvent.keyDown(window, { key: '"', code: 'Digit3', ctrlKey: true });
+    expect(await screen.findByTestId('page-agenda')).toBeInTheDocument();
+
+    // AZERTY Ctrl+' (Digit4 -> Paramètres)
+    fireEvent.keyDown(window, { key: "'", code: 'Digit4', ctrlKey: true });
+    expect(await screen.findByTestId('page-settings')).toBeInTheDocument();
+
+    // AZERTY Ctrl+& (Digit1 -> Dashboard)
+    fireEvent.keyDown(window, { key: '&', code: 'Digit1', ctrlKey: true });
+    expect(await screen.findByTestId('page-dashboard')).toBeInTheDocument();
+
+    // Pavé numérique Ctrl+Numpad2 -> Tâches
+    fireEvent.keyDown(window, { key: '2', code: 'Numpad2', ctrlKey: true });
+    expect(await screen.findByTestId('page-tasks')).toBeInTheDocument();
+
+    // Pavé numérique Ctrl+Numpad4 -> Paramètres
+    fireEvent.keyDown(window, { key: '4', code: 'Numpad4', ctrlKey: true });
+    expect(await screen.findByTestId('page-settings')).toBeInTheDocument();
+  });
+
+  it('permet de replier/déplier le panneau droit de la page Tâches (Option B), persiste dans settings et le rouvre à la sélection d’une tâche', async () => {
+    await seedDemoData();
+    render(<App />);
+
+    fireEvent.click(screen.getByTestId('nav-tasks'));
+    expect(await screen.findByTestId('page-tasks')).toBeInTheDocument();
+
+    // Par défaut le panneau est ouvert
+    expect(screen.getByTestId('tasks-right-panel')).toHaveAttribute(
+      'data-collapsed',
+      'false',
+    );
+    expect(screen.getByTestId('task-syntax-panel')).toBeInTheDocument();
+
+    // Clic sur le bouton pour replier le panneau
+    fireEvent.click(screen.getByTestId('tasks-panel-collapse-btn'));
+    await waitFor(async () => {
+      expect(screen.getByTestId('tasks-right-panel')).toHaveAttribute(
+        'data-collapsed',
+        'true',
+      );
+      expect(
+        screen.getByTestId('tasks-right-panel-collapsed-strip'),
+      ).toBeInTheDocument();
+      expect(
+        await getSettingValue('quick_capture_panel_collapsed', false),
+      ).toBe(true);
+    });
+
+    // Sélectionner une tâche dans la liste rouvre automatiquement le panneau (quick_capture_panel_collapsed = false)
+    fireEvent.click(screen.getByTestId('task-select-demo-task-1'));
+    await waitFor(async () => {
+      expect(screen.getByTestId('tasks-right-panel')).toHaveAttribute(
+        'data-collapsed',
+        'false',
+      );
+      expect(screen.getByTestId('task-detail-panel')).toBeInTheDocument();
+      expect(
+        await getSettingValue('quick_capture_panel_collapsed', true),
+      ).toBe(false);
+    });
+
+    // Replier à nouveau depuis le panneau de détail puis rouvrir via le bouton du bandeau vertical
+    fireEvent.click(screen.getByTestId('tasks-panel-collapse-btn'));
+    expect(
+      await screen.findByTestId('tasks-right-panel-collapsed-strip'),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('tasks-panel-expand-btn'));
+    await waitFor(async () => {
+      expect(screen.getByTestId('tasks-right-panel')).toHaveAttribute(
+        'data-collapsed',
+        'false',
+      );
+      expect(
+        await getSettingValue('quick_capture_panel_collapsed', true),
+      ).toBe(false);
+    });
+  });
+
+  it('tronque les tâches longues avec line-clamp-1 et permet d’étendre/replier via Voir plus / Voir moins', async () => {
+    const longTask = await createTask({
+      title:
+        'Rédiger le mémoire complet d’architecture logicielle distribuée avec analyse comparative détaillée',
+      notes:
+        'Inclure les schémas de séquence, les benchmarks SQLite local-first et la revue de littérature académique',
+      category_id: 'cat-ecole',
+      due_date: '2026-11-02',
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getByTestId('nav-tasks'));
+    expect(await screen.findByTestId('page-tasks')).toBeInTheDocument();
+
+    const titleEl = await screen.findByTestId(`task-title-${longTask.id}`);
+    expect(titleEl.className).toContain('line-clamp-1');
+
+    const expandBtn = screen.getByTestId(`task-expand-btn-${longTask.id}`);
+    expect(expandBtn).toHaveTextContent('Voir plus');
+    expect(expandBtn).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(expandBtn);
+    expect(expandBtn).toHaveTextContent('Voir moins');
+    expect(expandBtn).toHaveAttribute('aria-expanded', 'true');
+    expect(titleEl.className).not.toContain('line-clamp-1');
+
+    fireEvent.click(expandBtn);
+    expect(expandBtn).toHaveTextContent('Voir plus');
+    expect(titleEl.className).toContain('line-clamp-1');
+  });
+
+  it('permet de changer le format de date dans les Paramètres (DD-MM-YYYY, YYYY-MM-DD, MM-DD-YYYY) et met à jour l’affichage et la saisie rapide', async () => {
+    await seedDemoData();
+    render(<App />);
+
+    // Vérifier le format par défaut DD-MM-YYYY dans Tâches (demo-task-5 est au 2026-11-04 -> 04-11-2026)
+    fireEvent.click(screen.getByTestId('nav-tasks'));
+    expect(await screen.findByTestId('page-tasks')).toBeInTheDocument();
+    expect(await screen.findByTestId('task-due-label-demo-task-5')).toHaveTextContent(
+      '04-11-2026',
+    );
+
+    // Aller dans Paramètres et choisir MM-DD-YYYY
+    fireEvent.click(screen.getByTestId('nav-settings'));
+    expect(await screen.findByTestId('page-settings')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('date-format-option-MM-DD-YYYY'));
+    await waitFor(async () => {
+      expect(await getSettingValue('date_format', 'DD-MM-YYYY')).toBe(
+        'MM-DD-YYYY',
+      );
+    });
+
+    // Retour dans Tâches : l'échéance est formatée en MM-DD-YYYY (11-04-2026) et la saisie rapide interprète @11-15-2026
+    fireEvent.click(screen.getByTestId('nav-tasks'));
+    expect(await screen.findByTestId('task-due-label-demo-task-5')).toHaveTextContent(
+      '11-04-2026',
+    );
+    expect(screen.getByTestId('syntax-token-date-desc')).toHaveTextContent(
+      '@11-15-2026',
+    );
+
+    const quickInput = screen.getByTestId('tasks-quick-add-input');
+    fireEvent.change(quickInput, {
+      target: { value: 'Livrer version beta @11-15-2026' },
+    });
+    expect(screen.getByTestId('quick-preview-due-badge')).toHaveTextContent(
+      '@11-15-2026',
+    );
   });
 });

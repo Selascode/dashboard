@@ -9,9 +9,11 @@ import {
 } from '../design-system/tokens';
 import {
   ColorPalette,
+  DateFormat,
   ThemeMode,
   getSettingValue,
   setSettingValue,
+  updateSettings,
 } from '../lib/db';
 
 interface ThemeCachePayload {
@@ -31,6 +33,10 @@ interface ThemeContextValue {
   setCustomPalettes: (palettes: ColorPalette[]) => Promise<void>;
   userName: string;
   setUserName: (name: string) => Promise<void>;
+  dateFormat: DateFormat;
+  setDateFormat: (format: DateFormat) => Promise<void>;
+  quickCapturePanelCollapsed: boolean;
+  setQuickCapturePanelCollapsed: (collapsed: boolean) => Promise<void>;
 }
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
@@ -162,6 +168,9 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
   );
   const [customPalettes, setCustomPalettesState] = useState<ColorPalette[]>([]);
   const [userName, setUserNameState] = useState<string>('');
+  const [dateFormat, setDateFormatState] = useState<DateFormat>('DD-MM-YYYY');
+  const [quickCapturePanelCollapsed, setQuickCapturePanelCollapsedState] =
+    useState<boolean>(false);
 
   useEffect(() => {
     let isMounted = true;
@@ -170,31 +179,54 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
       getSettingValue<string>('active_palette', DEFAULT_PALETTE.id),
       getSettingValue<ColorPalette[]>('custom_palettes', []),
       getSettingValue<string>('user_name', ''),
+      getSettingValue<DateFormat>('date_format', 'DD-MM-YYYY'),
+      getSettingValue<boolean>('quick_capture_panel_collapsed', false),
     ])
-      .then(([storedTheme, storedPaletteId, storedCustomPalettes, storedUserName]) => {
-        if (!isMounted) return;
-        const queryOverride = getQueryThemeOverride();
-        const effectiveTheme = queryOverride ?? storedTheme;
-        const validMode: ThemeMode =
-          effectiveTheme === 'light' || effectiveTheme === 'dark' || effectiveTheme === 'system'
-            ? effectiveTheme
-            : 'system';
-        const validCustom = Array.isArray(storedCustomPalettes)
-          ? storedCustomPalettes
-          : [];
-        const palette = findPaletteById(
-          storedPaletteId || DEFAULT_PALETTE.id,
-          validCustom,
-        );
-        const resolved = resolveThemeMode(validMode);
+      .then(
+        ([
+          storedTheme,
+          storedPaletteId,
+          storedCustomPalettes,
+          storedUserName,
+          storedDateFormat,
+          storedPanelCollapsed,
+        ]) => {
+          if (!isMounted) return;
+          const queryOverride = getQueryThemeOverride();
+          const effectiveTheme = queryOverride ?? storedTheme;
+          const validMode: ThemeMode =
+            effectiveTheme === 'light' ||
+            effectiveTheme === 'dark' ||
+            effectiveTheme === 'system'
+              ? effectiveTheme
+              : 'system';
+          const validCustom = Array.isArray(storedCustomPalettes)
+            ? storedCustomPalettes
+            : [];
+          const palette = findPaletteById(
+            storedPaletteId || DEFAULT_PALETTE.id,
+            validCustom,
+          );
+          const resolved = resolveThemeMode(validMode);
+          const validDateFormat: DateFormat =
+            storedDateFormat === 'DD-MM-YYYY' ||
+            storedDateFormat === 'YYYY-MM-DD' ||
+            storedDateFormat === 'MM-DD-YYYY'
+              ? storedDateFormat
+              : 'DD-MM-YYYY';
 
-        setThemeState(validMode);
-        setResolvedTheme(resolved);
-        setActivePaletteIdState(palette.id);
-        setCustomPalettesState(validCustom);
-        setUserNameState(typeof storedUserName === 'string' ? storedUserName : '');
-        applyThemeAndTokensToDocument(resolved, validMode, palette);
-      })
+          setThemeState(validMode);
+          setResolvedTheme(resolved);
+          setActivePaletteIdState(palette.id);
+          setCustomPalettesState(validCustom);
+          setUserNameState(
+            typeof storedUserName === 'string' ? storedUserName : '',
+          );
+          setDateFormatState(validDateFormat);
+          setQuickCapturePanelCollapsedState(Boolean(storedPanelCollapsed));
+          applyThemeAndTokensToDocument(resolved, validMode, palette);
+        },
+      )
       .catch(() => {
         if (!isMounted) return;
         const resolved = resolveThemeMode('system');
@@ -276,6 +308,19 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
     await setSettingValue<string>('user_name', trimmed);
   }, []);
 
+  const setDateFormat = useCallback(async (format: DateFormat) => {
+    setDateFormatState(format);
+    await updateSettings({ date_format: format });
+  }, []);
+
+  const setQuickCapturePanelCollapsed = useCallback(
+    async (collapsed: boolean) => {
+      setQuickCapturePanelCollapsedState(collapsed);
+      await updateSettings({ quick_capture_panel_collapsed: collapsed });
+    },
+    [],
+  );
+
   const palettes = [...BUILTIN_PALETTES, ...customPalettes];
 
   return (
@@ -291,6 +336,10 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({
         setCustomPalettes,
         userName,
         setUserName,
+        dateFormat,
+        setDateFormat,
+        quickCapturePanelCollapsed,
+        setQuickCapturePanelCollapsed,
       }}
     >
       {children}

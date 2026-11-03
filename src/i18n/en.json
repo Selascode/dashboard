@@ -1,0 +1,283 @@
+{
+  "app": {
+    "brand": "focus",
+    "title": "focus",
+    "subtitle": "What should I do today?",
+    "skipToContent": "Skip to main content",
+    "keyboardHint": "100% keyboard navigation enabled",
+    "footerMotto": "A space to move forward at your own pace.",
+    "allShortcutsLink": "? All keyboard shortcuts",
+    "newTaskButton": "New task",
+    "searchPlaceholder": "Search in my workspace",
+    "searchShortcut": "⌘K",
+    "close": "Close",
+    "cancel": "Cancel",
+    "save": "Save",
+    "undo": "Undo (Ctrl+Z)",
+    "undoToast": "Action completed. Press Ctrl+Z to undo."
+  },
+  "nav": {
+    "sidebarLabel": "Main navigation",
+    "sectionTitle": "MY WORKSPACE",
+    "dashboard": "Dashboard",
+    "tasks": "Tasks",
+    "agenda": "Calendar",
+    "settings": "Settings",
+    "briefing": "Briefing",
+    "mailReserved": "Mail (later)",
+    "stepByStepTitle": "One step at a time.",
+    "stepByStepDescription": "No need to do everything. Start with what matters to you.",
+    "needHelp": "Need a hand?",
+    "workspaceTitle": "My workspace",
+    "workspaceSubtitle": "Personal",
+    "shortcuts": {
+      "dashboard": "CTRL+1",
+      "tasks": "CTRL+2",
+      "agenda": "CTRL+3",
+      "settings": "CTRL+4",
+      "briefing": "CTRL+B",
+      "palette": "CTRL+K",
+      "newTask": "CTRL+N",
+      "quickAdd": "N",
+      "undo": "CTRL+Z",
+      "help": "?",
+      "escape": "ESC"
+    }
+  },
+  "commands": {
+    "paletteTitle": "Command palette",
+    "palettePlaceholder": "Type a command or search for a task…",
+    "emptyResults": "No matching results.",
+    "groupNavigation": "Navigation",
+    "groupActions": "Quick actions",
+    "groupTemplates": "Input templates",
+    "groupTasks": "Tasks",
+    "navDashboard": "Go to Dashboard",
+    "navTasks": "Go to Tasks",
+    "navAgenda": "Go to Calendar",
+    "navSettings": "Open Settings",
+    "openBriefing": "Open Morning Briefing",
+    "createNewTask": "Create a new task",
+    "inlineNewTask": "Add a task in the list",
+    "undoLastAction": "Undo last action",
+    "openShortcutsHelp": "Show keyboard shortcuts help",
+    "closeOverlay": "Close active modal or overlay",
+    "toggleTheme": "Toggle light / dark mode",
+    "shortcutsModalTitle": "Keyboard shortcuts",
+    "shortcutsModalSubtitle": "100% of common actions are accessible without a mouse."
+  },
+  "dashboard": {
+    "greetingWithName": "Hello {name}, your day, with a light mind.",
+    "greetingWithoutName": "Hello, your day, with a light mind.",
+    "heading": "Hello, your day, with a light mind.",
+    "description": "What matters in one place, to move forward at your own pace.",
+    "focusZone": {
+      "title": "Focus 5",
+      "subtitle": "Your daily compass",
+      "badge": "Top priority",
+      "progress": "{count}/5",
+      "prioritiesSuffix": "priorities",
+      "emptyTitle": "What matters to you today?",
+      "emptyDescription": "Your Focus is still empty. Pick up to 5 priorities.",
+      "emptySubDescription": "Just one is already a great start.",
+      "composeButton": "Compose my Focus",
+      "nowModeButton": "Now Mode",
+      "nowModeExit": "Exit Now Mode",
+      "nowModeHeading": "Happening now",
+      "nowModeTimerStart": "Start 25 min",
+      "nowModeTimerPause": "Pause",
+      "nowModeTimerReset": "Reset",
+      "footerMotto": "Less distraction, more intention.",
+      "moveUp": "Move priority up",
+      "moveDown": "Move priority down",
+      "removeFromFocus": "Remove from Focus",
+      "limitReached": "Limit reached: maximum 5 priorities in today's Focus."
+    },
+    "agendaZone": {
+      "title": "Today's schedule",
+      "subtitle": "ICS · Read-only",
+      "emptyTitle": "A day without appointments.",
+      "empty": "No events scheduled for today. Your ICS events will appear here.",
+      "openLink": "Open calendar"
+    },
+    "deadlinesZone": {
+      "title": "Upcoming deadlines",
+      "subtitle": "Upcoming and overdue tasks",
+      "upcomingTab": "Upcoming",
+      "overdueTab": "Overdue",
+      "emptyTitle": "All clear for now.",
+      "empty": "No upcoming or overdue deadlines.",
+      "openTasksAria": "See all tasks",
+      "overdueBadge": "Overdue"
+    },
+    "ShortcutsZone": {
+      "title": "Pinned shortcuts",
+      "subtitle": "Favorite connected tools",
+      "manageLink": "Manage connected tools",
+      "emptyTitle": "Your favorite tools, right here.",
+      "empty": "No shortcuts yet. Pin your favorite connected tools to open them in one click.",
+      "pinButton": "Pin a tool"
+    },
+    "mailZone": {
+      "title": "Mail (reserved slot V3)",
+      "description": "Reserved area in the fixed layout, hidden until the mail module is enabled."
+    }
+  },
+  "tasks": {
+    "heading": "Your tasks, with a clearer mind.",
+    "description": "Write down, organize, then move forward. One thing at a time.",
+    "categoriesSectionTitle": "YOUR CATEGORIES",
+    "manageCategories": "Manage categories",
+    "allCategories": "All",
+    "cardTitle": "My tasks",
+    "todoCountSuffix": "to do",
+    "tabTodo": "To do",
+    "tabDone": "Done",
+    "searchPlaceholder": "Search a task",
+    "sortByDueDate": "Due date",
+    "sortByPriority": "Priority",
+    "viewList": "List",
+    "viewCategories": "Categories",
+    "defaultCategoriesTitle": "Categories initialized in local database",
+    "systemBadge": "System",
+    "emptyTasks": "No tasks in this view. Press N to add your first task.",
+    "groupToday": "Today",
+    "groupUpcoming": "Upcoming",
+    "groupNoDueDate": "No due date",
+    "dueToday": "Today",
+    "dueToPlan": "To plan",
+    "overduePrefix": "Overdue ·",
+    "addTaskPlaceholder": "Add a task…",
+    "quickAddPlaceholder": "Ex: Review statistics chapter #ecole @auj !3 ~45m *",
+    "quickAddSubmit": "Add",
+    "toggleFocusAdd": "Add to Focus 5",
+    "toggleFocusRemove": "Remove from Focus 5",
+    "taskActionsAria": "Task actions",
+    "seeMore": "See more",
+    "seeLess": "See less",
+    "collapsePanel": "Collapse side panel",
+    "expandPanel": "Expand Quick capture & Details panel",
+    "collapsedPanelLabel": "Quick capture & Details",
+    "priorityLabels": {
+      "p0": "Normal",
+      "p1": "Low (!1)",
+      "p2": "Medium (!2)",
+      "p3": "High (!3)"
+    },
+    "statusLabels": {
+      "todo": "To do",
+      "in_progress": "In progress",
+      "done": "Done",
+      "cancelled": "Cancelled"
+    },
+    "detailPanel": {
+      "title": "Details and editing",
+      "subtitle": "Edit properties of the selected task.",
+      "fieldTitle": "Title",
+      "fieldNotes": "Notes",
+      "fieldNotesPlaceholder": "Add a detail or sub-step…",
+      "fieldCategory": "Category",
+      "fieldDueDate": "Due date",
+      "fieldPriority": "Priority",
+      "fieldDuration": "Estimated duration (minutes)",
+      "fieldStatus": "Status",
+      "focusButtonAdd": "Pin to Focus 5",
+      "focusButtonRemove": "Remove from Focus 5",
+      "deleteTask": "Delete task"
+    },
+    "syntaxPanel": {
+      "title": "Keyboard quick capture",
+      "subtitle": "A single line is enough to create a complete and categorized task in under 5 seconds.",
+      "exampleLabel": "Syntax example",
+      "exampleCode": "Rendre le TP de SGBD #ecole @ven 18h !3 ~2h *",
+      "tokensTitle": "Recognized tokens",
+      "tokenCategory": "#category",
+      "tokenCategoryDesc": "Assigns category (#ecole, #sport, #perso, #projets)",
+      "tokenDate": "@date",
+      "tokenDateDesc": "Sets due date (@auj, @demain, @ven, {example})",
+      "tokenPriority": "!1 to !3",
+      "tokenPriorityDesc": "Sets priority (!3 = high, no token = 0)",
+      "tokenDuration": "~duration",
+      "tokenDurationDesc": "Estimated duration (~30m, ~45m, ~1h, ~1h30)",
+      "tokenFocus": "* (at end)",
+      "tokenFocusDesc": "Adds the task directly to today's Focus 5",
+      "templatesTitle": "Quick capture templates",
+      "templatesSubtitle": "Click or press Enter to prefill the input.",
+      "templates": {
+        "study": {
+          "label": "Study session",
+          "template": "Réviser le chapitre #ecole @auj !2 ~45m"
+        },
+        "sport": {
+          "label": "Workout session",
+          "template": "Faire une sortie de 5 km #sport @auj !2 ~30m"
+        },
+        "project": {
+          "label": "Project milestone",
+          "template": "Finaliser la maquette #projets @auj !3 ~1h *"
+        }
+      }
+    }
+  },
+  "agenda": {
+    "heading": "Your calendar, with clarity.",
+    "description": "View your ICS schedules in read-only mode, with no account or cloud required.",
+    "comingSoonBadge": "Coming soon · Milestone J3",
+    "comingSoonTitle": "Read-only calendar arrives in Milestone J3.",
+    "comingSoonDescription": "You will be able to import an ICS file or subscribe to an ICS URL (protected in the system keychain) and switch between Week and Month views.",
+    "viewWeek": "Week",
+    "viewMonth": "Month",
+    "emptySources": "No ICS source configured yet.",
+    "backToDashboard": "Back to Dashboard (Ctrl+1)"
+  },
+  "briefing": {
+    "heading": "Morning Briefing",
+    "description": "Review your day in under 30 seconds and compose your Focus 5.",
+    "comingSoonBadge": "Coming soon · Milestone J5",
+    "comingSoonTitle": "The Morning Briefing ritual arrives in Milestone J5.",
+    "comingSoonDescription": "It will gather today's events, due tasks, and yesterday's unfinished Focus to compose your Focus 5 in one click.",
+    "closeHint": "Press Esc to close and return to your workspace."
+  },
+  "settings": {
+    "heading": "Workspace settings",
+    "description": "Customize appearance, palette, date format and check the local-first storage status.",
+    "comingSoonBadge": "In progress · Milstones J2 to J5",
+    "comingSoonTitle": "Advanced settings (ICS sources, launcher, backups) are coming soon.",
+    "profile": {
+      "title": "Personalized greeting",
+      "description": "First name displayed in the Dashboard greeting (optional).",
+      "label": "Your first name",
+      "placeholder": "Ex: Selasi"
+    },
+    "appearance": {
+      "title": "Appearance and readability",
+      "description": "Choose display mode and dynamic palette. Contrast complies with WCAG AA.",
+      "groupLabel": "Color theme choice",
+      "paletteGroupLabel": "Palette choice",
+      "light": "Light",
+      "lightHint": "Bright high-contrast background",
+      "dark": "Dark",
+      "darkHint": "Visual comfort in low light",
+      "system": "System",
+      "systemHint": "Automatically follows your operating system",
+      "activeTheme": "Applied theme:"
+    },
+    "dateFormat": {
+      "title": "Due date format",
+      "description": "Choose how due dates are displayed and parsed in quick capture across your workspace.",
+      "groupLabel": "Date format",
+      "ddmmyyyy": "DD-MM-YYYY",
+      "ddmmyyyyHint": "Day-Month-Year (e.g., 15-11-2026) — Default",
+      "yyyymmdd": "YYYY-MM-DD",
+      "yyyymmddHint": "International ISO format (e.g., 2026-11-15)",
+      "mmddyyyy": "MM-DD-YYYY",
+      "mmddyyyyHint": "Month-Day-Year (e.g., 11-15-2026)"
+    },
+    "storage": {
+      "title": "Local-first data foundation (SQLite)",
+      "schemaVersion": "Schema version",
+      "categoriesCount": "Active categories",
+      "syncReady": "Sync fields ready (UUID, UTC ISO 8601, soft delete, device_id)"
+    }
+  }
+}
