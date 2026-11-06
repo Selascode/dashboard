@@ -274,9 +274,16 @@ describe('Coque, Navigation Clavier, Palette cmdk & Thèmes (Lots A & B)', () =>
 
     // Replier à nouveau depuis le panneau de détail puis rouvrir via le bouton du bandeau vertical
     fireEvent.click(screen.getByTestId('tasks-panel-collapse-btn'));
-    expect(
-      await screen.findByTestId('tasks-right-panel-collapsed-strip'),
-    ).toBeInTheDocument();
+    const collapsedStrip = await screen.findByTestId(
+      'tasks-right-panel-collapsed-strip',
+    );
+    expect(collapsedStrip).toBeInTheDocument();
+
+    const collapsedLabel = screen.getByTestId('tasks-right-panel-collapsed-label');
+    expect(collapsedLabel.className).toContain('whitespace-nowrap');
+    expect(collapsedLabel.className).toContain('[writing-mode:horizontal-tb]');
+    expect(collapsedLabel.className).toContain('lg:[writing-mode:vertical-rl]');
+    expect(collapsedLabel.getAttribute('style')).toBeNull();
 
     fireEvent.click(screen.getByTestId('tasks-panel-expand-btn'));
     await waitFor(async () => {
@@ -287,6 +294,20 @@ describe('Coque, Navigation Clavier, Palette cmdk & Thèmes (Lots A & B)', () =>
       expect(
         await getSettingValue('quick_capture_panel_collapsed', true),
       ).toBe(false);
+    });
+
+    // Replier puis cliquer sur la barre pliée entière (ou son libellé) pour la déplier au doigt/souris
+    fireEvent.click(screen.getByTestId('tasks-panel-collapse-btn'));
+    expect(
+      await screen.findByTestId('tasks-right-panel-collapsed-strip'),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('tasks-right-panel-collapsed-label'));
+    await waitFor(async () => {
+      expect(screen.getByTestId('tasks-right-panel')).toHaveAttribute(
+        'data-collapsed',
+        'false',
+      );
     });
   });
 

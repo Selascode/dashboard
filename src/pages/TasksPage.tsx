@@ -927,14 +927,17 @@ export const TasksPage: React.FC<TasksPageProps> = ({
           data-collapsed={isRightPanelCollapsed ? 'true' : 'false'}
           className={`focus-card-surface ${
             isRightPanelCollapsed
-              ? 'lg:col-span-1 p-3 flex flex-col items-center justify-between min-h-[260px]'
-              : 'lg:col-span-5 p-6 flex flex-col gap-5'
+              ? 'lg:col-span-1 px-3.5 py-2.5 lg:px-2 lg:py-4 flex flex-row lg:flex-col items-center justify-between min-h-0 lg:min-h-[340px] overflow-hidden'
+              : 'lg:col-span-5 p-4 sm:p-6 flex flex-col gap-5 overflow-hidden'
           } rounded-3xl transition-all`}
         >
           {isRightPanelCollapsed ? (
             <div
               data-testid="tasks-right-panel-collapsed-strip"
-              className="flex flex-col items-center justify-between gap-4 py-2 w-full h-full"
+              onClick={() => {
+                void setQuickCapturePanelCollapsed(false);
+              }}
+              className="flex flex-1 flex-row lg:flex-col items-center justify-between gap-2.5 lg:gap-4 w-full min-w-0 cursor-pointer"
             >
               <button
                 type="button"
@@ -942,23 +945,24 @@ export const TasksPage: React.FC<TasksPageProps> = ({
                 aria-expanded={false}
                 aria-label={t.tasks.expandPanel}
                 title={t.tasks.expandPanel}
-                onClick={() => {
+                onClick={(e) => {
+                  e.stopPropagation();
                   void setQuickCapturePanelCollapsed(false);
                 }}
-                className="inline-flex h-10 w-10 items-center justify-center rounded-2xl border border-subtle bg-surface-muted text-primary hover:border-accent-primary transition-colors"
+                className="inline-flex h-8 w-8 lg:h-9 lg:w-9 shrink-0 items-center justify-center rounded-2xl border border-subtle bg-surface-muted text-primary hover:border-accent-primary transition-colors"
               >
-                <PanelRightOpen className="h-5 w-5" aria-hidden="true" />
+                <PanelRightOpen className="h-4 w-4" aria-hidden="true" />
               </button>
 
               <span
-                className="text-[11px] font-semibold uppercase tracking-wider text-secondary select-none"
-                style={{ writingMode: 'vertical-rl' }}
+                data-testid="tasks-right-panel-collapsed-label"
+                className="min-w-0 flex-1 lg:flex-none shrink-0 text-center [writing-mode:horizontal-tb] lg:[writing-mode:vertical-rl] text-[11px] lg:text-[10px] xl:text-[11px] font-semibold uppercase tracking-wide lg:tracking-wider leading-tight lg:leading-none text-secondary truncate lg:overflow-visible whitespace-nowrap lg:whitespace-nowrap lg:py-1 select-none"
               >
                 {t.tasks.collapsedPanelLabel}
               </span>
 
-              <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-surface-muted text-secondary">
-                <Scan className="h-4 w-4" aria-hidden="true" />
+              <span className="inline-flex h-7 w-7 lg:h-8 lg:w-8 shrink-0 items-center justify-center rounded-full bg-surface-muted text-secondary">
+                <Scan className="h-3.5 w-3.5 lg:h-4 lg:w-4" aria-hidden="true" />
               </span>
             </div>
           ) : selectedTask ? (
@@ -1042,7 +1046,7 @@ export const TasksPage: React.FC<TasksPageProps> = ({
                   />
                 </label>
 
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <label className="flex flex-col gap-1 text-xs font-semibold text-secondary">
                     <span>{t.tasks.detailPanel.fieldCategory}</span>
                     <select
@@ -1096,7 +1100,7 @@ export const TasksPage: React.FC<TasksPageProps> = ({
                   </label>
                 </div>
 
-                <div className="grid grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <label className="flex flex-col gap-1 text-xs font-semibold text-secondary">
                     <span>{t.tasks.detailPanel.fieldPriority}</span>
                     <select
@@ -1242,48 +1246,48 @@ export const TasksPage: React.FC<TasksPageProps> = ({
                   {t.tasks.syntaxPanel.tokensTitle}
                 </h3>
                 <dl className="divide-y divide-subtle text-xs">
-                  <div className="py-2 flex items-center justify-between gap-3">
+                  <div className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-3">
                     <dt className="font-mono font-semibold text-primary shrink-0">
                       {t.tasks.syntaxPanel.tokenCategory}
                     </dt>
-                    <dd className="text-secondary text-right">
+                    <dd className="text-secondary sm:text-right break-words">
                       {t.tasks.syntaxPanel.tokenCategoryDesc}
                     </dd>
                   </div>
-                  <div className="py-2 flex items-center justify-between gap-3">
+                  <div className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-3">
                     <dt className="font-mono font-semibold text-primary shrink-0">
                       {t.tasks.syntaxPanel.tokenDate}
                     </dt>
                     <dd
                       data-testid="syntax-token-date-desc"
-                      className="text-secondary text-right"
+                      className="text-secondary sm:text-right break-words"
                     >
                       {formatTranslation(t.tasks.syntaxPanel.tokenDateDesc, {
                         example: getQuickCaptureDateExample(dateFormat),
                       })}
                     </dd>
                   </div>
-                  <div className="py-2 flex items-center justify-between gap-3">
+                  <div className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-3">
                     <dt className="font-mono font-semibold text-primary shrink-0">
                       {t.tasks.syntaxPanel.tokenPriority}
                     </dt>
-                    <dd className="text-secondary text-right">
+                    <dd className="text-secondary sm:text-right break-words">
                       {t.tasks.syntaxPanel.tokenPriorityDesc}
                     </dd>
                   </div>
-                  <div className="py-2 flex items-center justify-between gap-3">
+                  <div className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-3">
                     <dt className="font-mono font-semibold text-primary shrink-0">
                       {t.tasks.syntaxPanel.tokenDuration}
                     </dt>
-                    <dd className="text-secondary text-right">
+                    <dd className="text-secondary sm:text-right break-words">
                       {t.tasks.syntaxPanel.tokenDurationDesc}
                     </dd>
                   </div>
-                  <div className="py-2 flex items-center justify-between gap-3">
+                  <div className="py-2 flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-3">
                     <dt className="font-mono font-semibold text-primary shrink-0">
                       {t.tasks.syntaxPanel.tokenFocus}
                     </dt>
-                    <dd className="text-secondary text-right">
+                    <dd className="text-secondary sm:text-right break-words">
                       {t.tasks.syntaxPanel.tokenFocusDesc}
                     </dd>
                   </div>
