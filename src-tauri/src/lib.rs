@@ -1,17 +1,22 @@
 pub mod db;
 
+use chrono::Utc;
 use db::{
     add_focus_item as db_add_focus_item, complete_task as db_complete_task,
     create_category as db_create_category, create_task as db_create_task,
     delete_category as db_delete_category, delete_task as db_delete_task,
-    get_current_schema_version, initialize_database, query_active_categories, query_active_tasks,
-    query_all_settings, query_focus_items_by_day, query_setting,
+    export_full_database_pretty_json, get_current_schema_version, initialize_database,
+    list_backup_files, query_active_categories, query_active_tasks, query_all_settings,
+    query_focus_items_by_day, query_setting, query_uncompleted_past_focus_items,
     remove_focus_item as db_remove_focus_item, reorder_focus_items as db_reorder_focus_items,
-    restore_task as db_restore_task, update_category as db_update_category,
-    update_task as db_update_task, upsert_setting, verify_schema_integrity, AppDbState, Category,
+    restore_task as db_restore_task, run_scheduled_or_exit_backup,
+    update_category as db_update_category, update_task as db_update_task, upsert_setting,
+    verify_schema_integrity, AppDbState, BackupFileInfo, BackupReport, Category,
     CreateCategoryInput, CreateTaskInput, DbStatus, FocusItem, Setting, Task, UpdateCategoryInput,
     UpdateTaskInput, ALL_TABLES, SYNCHRONIZABLE_TABLES,
 };
+use std::fs;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
@@ -182,6 +187,66 @@ fn reorder_focus_items(
 }
 
 #[tauri::command]
+fn list_uncompleted_past_focus_items(
+    before_focus_day: String,
+    state: State<'_, AppDbState>,
+) -> Result<Vec<FocusItem>, String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    query_uncompleted_past_focus_items(&conn, &before_focus_day).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn trigger_backup(
+    force: Option<bool>,
+    state: State<'_, AppDbState>,
+) -> Result<BackupReport, String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    run_scheduled_or_exit_backup(&conn, &state.db_path, Utc::now(), force.unwrap_or(true))
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_backups(state: State<'_, AppDbState>) -> Result<Vec<BackupFileInfo>, String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    list_backup_files(&conn, &state.db_path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_backup_dir(backup_dir: String, state: State<'_, AppDbState>) -> Result<Setting, String> {
+    let trimmed = backup_dir.trim();
+    if !trimmed.is_empty() {
+        let dir_path = PathBuf::from(trimmed);
+        fs::create_dir_all(&dir_path)
+            .map_err(|e| format!("Impossible de créer ou d'accéder au dossier de sauvegarde : {}", e))?;
+    }
+    let value_json = serde_json::to_string(trimmed).map_err(|e| e.to_string())?;
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    upsert_setting(&conn, "backup_dir", &value_json).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn export_full_json(
+    dest_path: Option<String>,
+    state: State<'_, AppDbState>,
+) -> Result<String, String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    let json = export_full_database_pretty_json(&conn).map_err(|e| e.to_string())?;
+    if let Some(path_str) = dest_path {
+        let trimmed = path_str.trim();
+        if !trimmed.is_empty() {
+            let path = PathBuf::from(trimmed);
+            if let Some(parent) = path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+                }
+            }
+            fs::write(&path, &json).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(json)
+}
+
+#[tauri::command]
 fn get_db_status(state: State<'_, AppDbState>) -> Result<DbStatus, String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
     verify_schema_integrity(&conn).map_err(|e| e.to_string())?;
@@ -227,6 +292,14 @@ pub fn run() {
             let (conn, last_purge_report) = initialize_database(&db_path)
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
 
+            // Sauvegarde quotidienne automatique au démarrage si elle n'a pas encore eu lieu aujourd'hui [BKP-1, BKP-2].
+            if let Err(err) = run_scheduled_or_exit_backup(&conn, &db_path, Utc::now(), false) {
+                eprintln!(
+                    "[BKP-1] Avertissement lors de la sauvegarde automatique de démarrage : {}",
+                    err
+                );
+            }
+
             let configured_shortcut = query_setting(&conn, "global_capture_shortcut")
                 .ok()
                 .flatten()
@@ -260,6 +333,26 @@ pub fn run() {
 
             Ok(())
         })
+        .on_window_event(|window, event| {
+            if matches!(
+                event,
+                tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
+            ) && window.label() == "main"
+            {
+                if let Some(state) = window.app_handle().try_state::<AppDbState>() {
+                    if let Ok(conn) = state.conn.lock() {
+                        if let Err(err) =
+                            run_scheduled_or_exit_backup(&conn, &state.db_path, Utc::now(), true)
+                        {
+                            eprintln!(
+                                "[BKP-1] Avertissement lors de la sauvegarde de fermeture : {}",
+                                err
+                            );
+                        }
+                    }
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             get_settings,
             get_setting,
@@ -279,6 +372,11 @@ pub fn run() {
             add_focus_item,
             remove_focus_item,
             reorder_focus_items,
+            list_uncompleted_past_focus_items,
+            trigger_backup,
+            list_backups,
+            set_backup_dir,
+            export_full_json,
             get_db_status,
         ])
         .run(tauri::generate_context!())

@@ -43,6 +43,7 @@ import {
   getQuickCaptureDateExample,
   parseQuickCapture,
 } from '../lib/quick-parser';
+import { canAddTaskToFocus } from '../lib/focus-engine';
 
 export interface TasksPageProps {
   quickAddFocusTrigger?: number;
@@ -274,11 +275,16 @@ export const TasksPage: React.FC<TasksPageProps> = ({
     });
 
     if (parsed.addToFocus) {
-      try {
-        await addFocusItem(REFERENCE_TODAY, created.id);
-        setFocusErrorBanner(null);
-      } catch {
+      const validation = canAddTaskToFocus(focusItems, created, REFERENCE_TODAY);
+      if (!validation.allowed) {
         setFocusErrorBanner(t.dashboard.focusZone.limitReached);
+      } else {
+        try {
+          await addFocusItem(REFERENCE_TODAY, created.id);
+          setFocusErrorBanner(null);
+        } catch {
+          setFocusErrorBanner(t.dashboard.focusZone.limitReached);
+        }
       }
     }
 
@@ -292,9 +298,14 @@ export const TasksPage: React.FC<TasksPageProps> = ({
     await completeTask(task.id, nextDone);
     await loadData();
     onPushUndo?.({
+      kind: 'complete_task',
       description: task.title,
       undo: async () => {
         await completeTask(task.id, !nextDone);
+        await loadData();
+      },
+      redo: async () => {
+        await completeTask(task.id, nextDone);
         await loadData();
       },
     });
@@ -307,9 +318,14 @@ export const TasksPage: React.FC<TasksPageProps> = ({
     }
     await loadData();
     onPushUndo?.({
+      kind: 'delete_task',
       description: task.title,
       undo: async () => {
         await restoreTask(task.id);
+        await loadData();
+      },
+      redo: async () => {
+        await deleteTask(task.id);
         await loadData();
       },
     });
@@ -317,6 +333,13 @@ export const TasksPage: React.FC<TasksPageProps> = ({
 
   const handleToggleFocus = async (task: TaskRecord) => {
     const isCurrentlyInFocus = focusTaskIds.has(task.id);
+    if (!isCurrentlyInFocus) {
+      const validation = canAddTaskToFocus(focusItems, task, REFERENCE_TODAY);
+      if (!validation.allowed) {
+        setFocusErrorBanner(t.dashboard.focusZone.limitReached);
+        return;
+      }
+    }
     try {
       if (isCurrentlyInFocus) {
         await removeFocusItem(REFERENCE_TODAY, task.id);
@@ -325,6 +348,18 @@ export const TasksPage: React.FC<TasksPageProps> = ({
       }
       setFocusErrorBanner(null);
       await loadData();
+      onPushUndo?.({
+        kind: 'toggle_focus',
+        description: task.title,
+        undo: async () => {
+          if (isCurrentlyInFocus) {
+            await addFocusItem(REFERENCE_TODAY, task.id);
+          } else {
+            await removeFocusItem(REFERENCE_TODAY, task.id);
+          }
+          await loadData();
+        },
+      });
     } catch {
       setFocusErrorBanner(t.dashboard.focusZone.limitReached);
     }

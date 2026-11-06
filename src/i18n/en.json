@@ -84,14 +84,21 @@
       "nowModeButton": "Now Mode",
       "nowModeExit": "Exit Now Mode",
       "nowModeHeading": "Happening now",
-      "nowModeTimerStart": "Start 25 min",
+      "nowModeTimerStart": "Start",
       "nowModeTimerPause": "Pause",
       "nowModeTimerReset": "Reset",
+      "nowModeComplete": "Complete task",
       "footerMotto": "Less distraction, more intention.",
       "moveUp": "Move priority up",
       "moveDown": "Move priority down",
       "removeFromFocus": "Remove from Focus",
-      "limitReached": "Limit reached: maximum 5 priorities in today's Focus."
+      "addToFocus": "Add to Focus",
+      "inFocusBadge": "Focus",
+      "limitReached": "Limit reached: maximum 5 priorities in today's Focus.",
+      "unfinishedPastTitle": "Unfinished priorities from yesterday",
+      "unfinishedPastSubtitle": "They were not carried over silently. Would you like to resume them today?",
+      "resumeTaskButton": "Resume in Focus",
+      "openBriefingButton": "Open Briefing"
     },
     "agendaZone": {
       "title": "Today's schedule",
@@ -278,6 +285,22 @@
       "schemaVersion": "Schema version",
       "categoriesCount": "Active categories",
       "syncReady": "Sync fields ready (UUID, UTC ISO 8601, soft delete, device_id)"
+    },
+    "backup": {
+      "title": "Automatic Backups & Data Export",
+      "description": "Your data is automatically backed up every day and when closing the application.",
+      "rotationPolicy": "Automatic rotation policy: 7 daily backups and 4 weekly backups retained.",
+      "dirLabel": "Backup destination folder",
+      "dirPlaceholder": "Default folder (<app_data>/backups)",
+      "dirSavedFeedback": "Backup folder saved.",
+      "triggerBackupBtn": "Back up now",
+      "backupSuccessFeedback": "SQLite backup completed successfully.",
+      "availableBackupsLabel": "Available backups",
+      "noBackupsYet": "No backups recorded in this session yet.",
+      "exportJsonTitle": "Full readable JSON export",
+      "exportJsonDesc": "Export all your categories, tasks, Focus items, and settings into a portable JSON file.",
+      "exportJsonBtn": "Export all to JSON",
+      "exportSuccessFeedback": "JSON export generated successfully (productivity-dashboard-backup-v1 format)."
     }
   }
 }

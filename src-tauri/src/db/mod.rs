@@ -24,6 +24,11 @@ pub const MIGRATIONS: &[(i64, &str, &str)] = &[
         "003_settings_and_quick_capture.sql",
         include_str!("../../migrations/003_settings_and_quick_capture.sql"),
     ),
+    (
+        4,
+        "004_backup_settings.sql",
+        include_str!("../../migrations/004_backup_settings.sql"),
+    ),
 ];
 
 pub const ALL_TABLES: &[&str] = &[
@@ -61,6 +66,8 @@ pub enum DbError {
     Sqlite(#[from] rusqlite::Error),
     #[error("Erreur d'entrée/sortie: {0}")]
     Io(#[from] std::io::Error),
+    #[error("Erreur de sérialisation JSON: {0}")]
+    Json(#[from] serde_json::Error),
     #[error("Intégrité du schéma invalide: {0}")]
     SchemaIntegrity(String),
     #[error("Validation métier: {0}")]
@@ -163,6 +170,108 @@ pub struct FocusItem {
     pub updated_at: String,
     pub deleted_at: Option<String>,
     pub device_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CalendarSource {
+    pub id: String,
+    pub name: String,
+    pub source_type: String,
+    pub location_or_keychain_ref: String,
+    pub refresh_interval_minutes: i64,
+    pub last_synced_at: Option<String>,
+    pub last_error: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CalendarEvent {
+    pub id: String,
+    pub source_id: String,
+    pub ics_uid: String,
+    pub title: String,
+    pub start_at: String,
+    pub end_at: String,
+    pub is_all_day: bool,
+    pub location: String,
+    pub notes: String,
+    pub rrule: Option<String>,
+    pub exdates_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LauncherItem {
+    pub id: String,
+    pub label: String,
+    pub item_type: String,
+    pub target: String,
+    pub icon: String,
+    pub is_pinned: bool,
+    pub group_name: String,
+    pub position: i64,
+    pub created_at: String,
+    pub updated_at: String,
+    pub deleted_at: Option<String>,
+    pub device_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CommandItem {
+    pub id: String,
+    pub label: String,
+    pub alias: Option<String>,
+    pub action_type: String,
+    pub action_target: String,
+    pub template_text: Option<String>,
+    pub shortcut: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub deleted_at: Option<String>,
+    pub device_id: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RotationReport {
+    pub daily_kept: usize,
+    pub daily_deleted: usize,
+    pub weekly_kept: usize,
+    pub weekly_deleted: usize,
+    pub deleted_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BackupReport {
+    pub performed: bool,
+    pub backup_dir: String,
+    pub daily_backup_path: Option<String>,
+    pub weekly_backup_path: Option<String>,
+    pub backup_date: String,
+    pub rotation: RotationReport,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BackupFileInfo {
+    pub filename: String,
+    pub path: String,
+    pub kind: String,
+    pub size_bytes: u64,
+    pub modified_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FullDatabaseExport {
+    pub format: String,
+    pub schema_version: i64,
+    pub exported_at: String,
+    pub categories: Vec<Category>,
+    pub tasks: Vec<Task>,
+    pub focus_items: Vec<FocusItem>,
+    pub calendar_sources: Vec<CalendarSource>,
+    pub calendar_events: Vec<CalendarEvent>,
+    pub launcher_items: Vec<LauncherItem>,
+    pub commands: Vec<CommandItem>,
+    pub settings: Vec<Setting>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -1159,6 +1268,432 @@ pub fn reorder_focus_items(
     query_focus_items_by_day(conn, focus_day)
 }
 
+/// Renvoie les `FocusItem` actifs (`deleted_at IS NULL`) des jours strictement antérieurs à
+/// `before_focus_day` (`focus_day < ?1`) dont l'issue n'est ni `'completed'` ni `'abandoned'`
+/// et dont la tâche associée est encore active et non terminée (`status NOT IN ('done', 'cancelled')`),
+/// sans jamais les copier automatiquement dans le jour courant [FOC-3].
+pub fn query_uncompleted_past_focus_items(
+    conn: &Connection,
+    before_focus_day: &str,
+) -> Result<Vec<FocusItem>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT f.id, f.focus_day, f.task_id, f.position, f.outcome,
+                f.created_at, f.updated_at, f.deleted_at, f.device_id
+         FROM focus_items f
+         INNER JOIN tasks t ON t.id = f.task_id
+         WHERE f.focus_day < ?1
+           AND f.deleted_at IS NULL
+           AND (f.outcome IS NULL OR (f.outcome != 'completed' AND f.outcome != 'abandoned'))
+           AND t.deleted_at IS NULL
+           AND t.status NOT IN ('done', 'cancelled')
+         ORDER BY f.focus_day DESC, f.position ASC",
+    )?;
+    let items = stmt
+        .query_map(params![before_focus_day], map_focus_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(items)
+}
+
+// ============================================================================
+// Sauvegarde automatique en ligne SQLite, Rotation 7j/4sem & Export JSON [BKP-1, BKP-2, BKP-3]
+// ============================================================================
+
+pub const EXPORT_FORMAT_V1: &str = "productivity-dashboard-backup-v1";
+pub const MAX_DAILY_BACKUPS: usize = 7;
+pub const MAX_WEEKLY_BACKUPS: usize = 4;
+
+/// Résout le dossier de sauvegarde actif à partir de `settings.backup_dir`
+/// ou replie sur `<parent de dashboard.db>/backups` [BKP-2].
+pub fn resolve_backup_dir(conn: &Connection, default_db_path: &Path) -> PathBuf {
+    let default_dir = default_db_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("backups");
+
+    if let Ok(Some(setting)) = query_setting(conn, "backup_dir") {
+        let parsed = serde_json::from_str::<String>(&setting.value_json)
+            .unwrap_or_else(|_| setting.value_json.trim().trim_matches('"').to_string());
+        let trimmed = parsed.trim();
+        if !trimmed.is_empty() && trimmed != "null" {
+            let candidate = PathBuf::from(trimmed);
+            if fs::create_dir_all(&candidate).is_ok() {
+                return candidate;
+            }
+        }
+    }
+
+    let _ = fs::create_dir_all(&default_dir);
+    default_dir
+}
+
+/// Applique la politique de rotation des sauvegardes [BKP-2] :
+/// - conserve uniquement les 7 plus récentes sauvegardes `daily-*.db` ;
+/// - conserve uniquement les 4 plus récentes sauvegardes `weekly-*.db` ;
+/// - ne supprime jamais les sauvegardes `pre_migration_*` ou autres fichiers.
+pub fn rotate_backups(backup_dir: &Path) -> Result<RotationReport, DbError> {
+    if !backup_dir.exists() {
+        return Ok(RotationReport::default());
+    }
+
+    let mut daily_files: Vec<(String, PathBuf)> = Vec::new();
+    let mut weekly_files: Vec<(String, PathBuf)> = Vec::new();
+
+    for entry in fs::read_dir(backup_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(filename) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if filename.starts_with("daily-") && filename.ends_with(".db") {
+            daily_files.push((filename.to_string(), path));
+        } else if filename.starts_with("weekly-") && filename.ends_with(".db") {
+            weekly_files.push((filename.to_string(), path));
+        }
+    }
+
+    // Tri décroissant par nom ISO (ex: daily-2026-11-10.db > daily-2026-11-09.db)
+    daily_files.sort_by(|a, b| b.0.cmp(&a.0));
+    weekly_files.sort_by(|a, b| b.0.cmp(&a.0));
+
+    let mut deleted_files = Vec::new();
+    let mut daily_deleted = 0usize;
+    let mut weekly_deleted = 0usize;
+
+    for (name, path) in daily_files.iter().skip(MAX_DAILY_BACKUPS) {
+        fs::remove_file(path)?;
+        daily_deleted += 1;
+        deleted_files.push(name.clone());
+    }
+
+    for (name, path) in weekly_files.iter().skip(MAX_WEEKLY_BACKUPS) {
+        fs::remove_file(path)?;
+        weekly_deleted += 1;
+        deleted_files.push(name.clone());
+    }
+
+    let daily_kept = daily_files.len().saturating_sub(daily_deleted);
+    let weekly_kept = weekly_files.len().saturating_sub(weekly_deleted);
+
+    Ok(RotationReport {
+        daily_kept,
+        daily_deleted,
+        weekly_kept,
+        weekly_deleted,
+        deleted_files,
+    })
+}
+
+/// Exécute la sauvegarde en ligne SQLite quotidienne et hebdomadaire puis applique la rotation 7j/4sem [BKP-1, BKP-2].
+/// - Si `force == false` (ex. au démarrage), ne refait pas la sauvegarde si `daily-YYYY-MM-DD.db`
+///   et `weekly-YYYY-Www.db` existent déjà et que `last_auto_backup_date` correspond à la date du jour.
+/// - Si `force == true` (ex. à la fermeture de l'application ou sur demande manuelle),
+///   met à jour la sauvegarde en ligne quotidienne (et hebdomadaire).
+pub fn run_scheduled_or_exit_backup(
+    conn: &Connection,
+    default_db_path: &Path,
+    now_utc: chrono::DateTime<Utc>,
+    force: bool,
+) -> Result<BackupReport, DbError> {
+    let backup_dir = resolve_backup_dir(conn, default_db_path);
+    fs::create_dir_all(&backup_dir)?;
+
+    let date_str = now_utc.format("%Y-%m-%d").to_string();
+    let week_str = now_utc.format("%G-W%V").to_string();
+
+    let daily_filename = format!("daily-{}.db", date_str);
+    let weekly_filename = format!("weekly-{}.db", week_str);
+
+    let daily_path = backup_dir.join(&daily_filename);
+    let weekly_path = backup_dir.join(&weekly_filename);
+
+    let last_backup_date = query_setting(conn, "last_auto_backup_date")?
+        .map(|s| s.value_json.trim().trim_matches('"').to_string())
+        .unwrap_or_default();
+
+    let already_backed_up_today =
+        !force && last_backup_date == date_str && daily_path.exists() && weekly_path.exists();
+
+    if already_backed_up_today {
+        let rotation = rotate_backups(&backup_dir)?;
+        return Ok(BackupReport {
+            performed: false,
+            backup_dir: backup_dir.to_string_lossy().into_owned(),
+            daily_backup_path: Some(daily_path.to_string_lossy().into_owned()),
+            weekly_backup_path: Some(weekly_path.to_string_lossy().into_owned()),
+            backup_date: date_str,
+            rotation,
+        });
+    }
+
+    // Mettre à jour last_auto_backup_date avant le backup en ligne pour que la copie SQLite embarque l'horodatage à jour
+    let date_json = format!("\"{}\"", date_str);
+    upsert_setting(conn, "last_auto_backup_date", &date_json)?;
+
+    perform_online_backup(conn, &daily_path)?;
+    if force || !weekly_path.exists() {
+        perform_online_backup(conn, &weekly_path)?;
+    }
+
+    let rotation = rotate_backups(&backup_dir)?;
+
+    Ok(BackupReport {
+        performed: true,
+        backup_dir: backup_dir.to_string_lossy().into_owned(),
+        daily_backup_path: Some(daily_path.to_string_lossy().into_owned()),
+        weekly_backup_path: Some(weekly_path.to_string_lossy().into_owned()),
+        backup_date: date_str,
+        rotation,
+    })
+}
+
+/// Liste les fichiers de sauvegarde SQLite présents dans le dossier actif [BKP-2].
+pub fn list_backup_files(
+    conn: &Connection,
+    default_db_path: &Path,
+) -> Result<Vec<BackupFileInfo>, DbError> {
+    let backup_dir = resolve_backup_dir(conn, default_db_path);
+    if !backup_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut files = Vec::new();
+    for entry in fs::read_dir(&backup_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let Some(filename) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !filename.ends_with(".db") {
+            continue;
+        }
+
+        let kind = if filename.starts_with("daily-") {
+            "daily"
+        } else if filename.starts_with("weekly-") {
+            "weekly"
+        } else if filename.starts_with("pre_migration_") || filename.starts_with("pre-migration-") {
+            "pre_migration"
+        } else {
+            continue;
+        };
+
+        let metadata = entry.metadata()?;
+        let size_bytes = metadata.len();
+        let modified_at = metadata
+            .modified()
+            .ok()
+            .map(|t| {
+                let dt: chrono::DateTime<Utc> = t.into();
+                dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()
+            })
+            .unwrap_or_else(now_utc_iso);
+
+        files.push(BackupFileInfo {
+            filename: filename.to_string(),
+            path: path.to_string_lossy().into_owned(),
+            kind: kind.to_string(),
+            size_bytes,
+            modified_at,
+        });
+    }
+
+    files.sort_by(|a, b| b.filename.cmp(&a.filename));
+    Ok(files)
+}
+
+fn query_all_categories_for_export(conn: &Connection) -> Result<Vec<Category>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, alias, color, position, is_system, created_at, updated_at, deleted_at, device_id
+         FROM categories
+         ORDER BY position ASC, created_at ASC",
+    )?;
+    let rows = stmt
+        .query_map([], map_category_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+fn query_all_tasks_for_export(conn: &Connection) -> Result<Vec<Task>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title, notes, category_id, status, priority, due_date, has_due_time,
+                estimated_minutes, completed_at, created_at, updated_at, deleted_at, device_id
+         FROM tasks
+         ORDER BY created_at ASC, id ASC",
+    )?;
+    let rows = stmt
+        .query_map([], map_task_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+fn query_all_focus_items_for_export(conn: &Connection) -> Result<Vec<FocusItem>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, focus_day, task_id, position, outcome, created_at, updated_at, deleted_at, device_id
+         FROM focus_items
+         ORDER BY focus_day ASC, position ASC, created_at ASC",
+    )?;
+    let rows = stmt
+        .query_map([], map_focus_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+fn query_all_calendar_sources_for_export(conn: &Connection) -> Result<Vec<CalendarSource>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, source_type, location_or_keychain_ref, refresh_interval_minutes,
+                last_synced_at, last_error, created_at, updated_at
+         FROM calendar_sources
+         ORDER BY created_at ASC, id ASC",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(CalendarSource {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                source_type: row.get(2)?,
+                location_or_keychain_ref: row.get(3)?,
+                refresh_interval_minutes: row.get(4)?,
+                last_synced_at: row.get(5)?,
+                last_error: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+fn query_all_calendar_events_for_export(conn: &Connection) -> Result<Vec<CalendarEvent>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, source_id, ics_uid, title, start_at, end_at, is_all_day, location, notes, rrule, exdates_json
+         FROM calendar_events
+         ORDER BY start_at ASC, id ASC",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            let is_all_day_int: i64 = row.get(6)?;
+            Ok(CalendarEvent {
+                id: row.get(0)?,
+                source_id: row.get(1)?,
+                ics_uid: row.get(2)?,
+                title: row.get(3)?,
+                start_at: row.get(4)?,
+                end_at: row.get(5)?,
+                is_all_day: is_all_day_int != 0,
+                location: row.get(7)?,
+                notes: row.get(8)?,
+                rrule: row.get(9)?,
+                exdates_json: row.get(10)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+fn query_all_launcher_items_for_export(conn: &Connection) -> Result<Vec<LauncherItem>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, label, item_type, target, icon, is_pinned, group_name, position,
+                created_at, updated_at, deleted_at, device_id
+         FROM launcher_items
+         ORDER BY position ASC, created_at ASC",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            let is_pinned_int: i64 = row.get(5)?;
+            Ok(LauncherItem {
+                id: row.get(0)?,
+                label: row.get(1)?,
+                item_type: row.get(2)?,
+                target: row.get(3)?,
+                icon: row.get(4)?,
+                is_pinned: is_pinned_int != 0,
+                group_name: row.get(6)?,
+                position: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+                deleted_at: row.get(10)?,
+                device_id: row.get(11)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+fn query_all_commands_for_export(conn: &Connection) -> Result<Vec<CommandItem>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, label, alias, action_type, action_target, template_text, shortcut,
+                created_at, updated_at, deleted_at, device_id
+         FROM commands
+         ORDER BY created_at ASC, id ASC",
+    )?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(CommandItem {
+                id: row.get(0)?,
+                label: row.get(1)?,
+                alias: row.get(2)?,
+                action_type: row.get(3)?,
+                action_target: row.get(4)?,
+                template_text: row.get(5)?,
+                shortcut: row.get(6)?,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+                deleted_at: row.get(9)?,
+                device_id: row.get(10)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Exporte l'intégralité des 8 tables de la base SQLite dans une structure sérialisable en JSON [BKP-3].
+pub fn export_full_database_json(conn: &Connection) -> Result<FullDatabaseExport, DbError> {
+    let schema_version = get_current_schema_version(conn)?;
+    Ok(FullDatabaseExport {
+        format: EXPORT_FORMAT_V1.to_string(),
+        schema_version,
+        exported_at: now_utc_iso(),
+        categories: query_all_categories_for_export(conn)?,
+        tasks: query_all_tasks_for_export(conn)?,
+        focus_items: query_all_focus_items_for_export(conn)?,
+        calendar_sources: query_all_calendar_sources_for_export(conn)?,
+        calendar_events: query_all_calendar_events_for_export(conn)?,
+        launcher_items: query_all_launcher_items_for_export(conn)?,
+        commands: query_all_commands_for_export(conn)?,
+        settings: query_all_settings(conn)?,
+    })
+}
+
+/// Sérialise l'export complet en JSON indenté lisible [BKP-3].
+pub fn export_full_database_pretty_json(conn: &Connection) -> Result<String, DbError> {
+    let payload = export_full_database_json(conn)?;
+    Ok(serde_json::to_string_pretty(&payload)?)
+}
+
+/// Désérialise et valide une archive JSON complète pour prouver qu'elle est 100 % réimportable [BKP-3].
+pub fn parse_full_database_json(json_str: &str) -> Result<FullDatabaseExport, DbError> {
+    let parsed: FullDatabaseExport = serde_json::from_str(json_str)?;
+    if parsed.format != EXPORT_FORMAT_V1 {
+        return Err(DbError::Validation(format!(
+            "Format d'export JSON non reconnu : '{}' (attendu : '{}').",
+            parsed.format, EXPORT_FORMAT_V1
+        )));
+    }
+    if parsed.schema_version < 1 {
+        return Err(DbError::Validation(format!(
+            "Version de schéma invalide dans l'export JSON : {}.",
+            parsed.schema_version
+        )));
+    }
+    Ok(parsed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1175,12 +1710,21 @@ mod tests {
         assert_eq!(purge_report.total_purged, 0);
         assert_eq!(
             get_current_schema_version(&conn).expect("version du schéma"),
-            3
+            4
         );
 
         verify_schema_integrity(&conn).expect("intégrité du schéma valide");
 
-        // Vérifier les clés settings du LOT A.1 et Migration 003
+        // Vérifier les clés settings du LOT A.1, Migration 003 et Migration 004
+        let backup_dir_setting = query_setting(&conn, "backup_dir")
+            .expect("lecture backup_dir")
+            .expect("backup_dir existe");
+        assert_eq!(backup_dir_setting.value_json, "\"\"");
+
+        let last_auto_backup = query_setting(&conn, "last_auto_backup_date")
+            .expect("lecture last_auto_backup_date")
+            .expect("last_auto_backup_date existe");
+        assert_eq!(last_auto_backup.value_json, "null");
         let theme = query_setting(&conn, "theme")
             .expect("lecture theme")
             .expect("theme existe");
@@ -1234,19 +1778,19 @@ mod tests {
         let tmp_dir = TempDir::new().expect("création dossier temporaire");
         let db_path = tmp_dir.path().join("dashboard.db");
 
-        let (mut conn, _) = initialize_database(&db_path).expect("init v2");
+        let (mut conn, _) = initialize_database(&db_path).expect("init v4");
 
         let backups_dir = tmp_dir.path().join("backups");
         assert!(backups_dir.exists(), "Le dossier backups/ doit exister");
 
         conn.execute(
             "INSERT INTO tasks (id, title, category_id, status, priority, created_at, updated_at, device_id)
-             VALUES ('task-before-v3', 'Tâche avant migration v3', 'cat-inbox', 'todo', 2, '2026-11-01T10:00:00Z', '2026-11-01T10:00:00Z', 'dev-1')",
+             VALUES ('task-before-v5', 'Tâche avant migration v5', 'cat-inbox', 'todo', 2, '2026-11-01T10:00:00Z', '2026-11-01T10:00:00Z', 'dev-1')",
             [],
         )
-        .expect("insertion tâche v2");
+        .expect("insertion tâche v4");
 
-        let migrations_v4: &[(i64, &str, &str)] = &[
+        let migrations_v5: &[(i64, &str, &str)] = &[
             (
                 1,
                 "001_init.sql",
@@ -1264,13 +1808,18 @@ mod tests {
             ),
             (
                 4,
-                "004_test_setting.sql",
-                "INSERT INTO settings (key, value_json, updated_at) VALUES ('migration_v4_flag', 'true', '2026-11-01T12:00:00Z');",
+                "004_backup_settings.sql",
+                include_str!("../../migrations/004_backup_settings.sql"),
+            ),
+            (
+                5,
+                "005_test_setting.sql",
+                "INSERT INTO settings (key, value_json, updated_at) VALUES ('migration_v5_flag', 'true', '2026-11-01T12:00:00Z');",
             ),
         ];
 
-        let created_backups = apply_migrations_with_list(&mut conn, Some(&db_path), migrations_v4)
-            .expect("application migration v4 avec backup");
+        let created_backups = apply_migrations_with_list(&mut conn, Some(&db_path), migrations_v5)
+            .expect("application migration v5 avec backup");
 
         assert_eq!(created_backups.len(), 1);
         let backup_path = &created_backups[0];
@@ -1278,20 +1827,20 @@ mod tests {
 
         let backup_conn = Connection::open(backup_path).expect("ouverture du backup SQLite");
         let backup_version = get_current_schema_version(&backup_conn).expect("version backup");
-        assert_eq!(backup_version, 3);
+        assert_eq!(backup_version, 4);
 
         let task_title: String = backup_conn
             .query_row(
-                "SELECT title FROM tasks WHERE id = 'task-before-v3'",
+                "SELECT title FROM tasks WHERE id = 'task-before-v5'",
                 [],
                 |r| r.get(0),
             )
             .expect("tâche présente dans le backup");
-        assert_eq!(task_title, "Tâche avant migration v3");
+        assert_eq!(task_title, "Tâche avant migration v5");
 
-        let v4_setting =
-            query_setting(&backup_conn, "migration_v4_flag").expect("lecture setting backup");
-        assert!(v4_setting.is_none());
+        let v5_setting =
+            query_setting(&backup_conn, "migration_v5_flag").expect("lecture setting backup");
+        assert!(v5_setting.is_none());
     }
 
     #[test]
@@ -1507,5 +2056,225 @@ mod tests {
             upsert_setting(&conn, "quick_capture_panel_collapsed", "true")
                 .expect("mise à jour quick_capture_panel_collapsed");
         assert_eq!(updated_collapsed.value_json, "true");
+    }
+
+    #[test]
+    fn test_bkp1_online_backup_and_bkp2_rotation_7_daily_4_weekly() {
+        let tmp_dir = TempDir::new().expect("création dossier temporaire");
+        let db_path = tmp_dir.path().join("dashboard.db");
+        let (conn, _) = initialize_database(&db_path).expect("init db");
+
+        // Configurer un dossier de sauvegarde personnalisé [BKP-2]
+        let custom_backup_dir = tmp_dir.path().join("custom_user_backups");
+        let custom_dir_json =
+            serde_json::to_string(&custom_backup_dir.to_string_lossy().to_string()).unwrap();
+        upsert_setting(&conn, "backup_dir", &custom_dir_json).expect("set backup_dir");
+
+        assert_eq!(resolve_backup_dir(&conn, &db_path), custom_backup_dir);
+
+        // Créer une tâche témoin pour vérifier l'intégrité SQLite des backups en ligne [BKP-1]
+        let task = create_task(
+            &conn,
+            CreateTaskInput {
+                title: "Tâche sauvegardée en ligne".to_string(),
+                priority: Some(3),
+                ..Default::default()
+            },
+        )
+        .expect("création tâche");
+
+        // Simuler 10 jours consécutifs de sauvegardes quotidiennes + 6 semaines distinctes
+        // Semaines 40 à 44 (5 semaines) + 10 jours dans les semaines 44-45
+        let simulated_dates = [
+            "2026-09-28T10:00:00Z", // 2026-W40
+            "2026-10-05T10:00:00Z", // 2026-W41
+            "2026-10-12T10:00:00Z", // 2026-W42
+            "2026-10-19T10:00:00Z", // 2026-W43
+            "2026-10-26T10:00:00Z", // 2026-W44 (jour 5)
+            "2026-10-27T10:00:00Z", // 2026-W44 (jour 6)
+            "2026-10-28T10:00:00Z", // 2026-W44 (jour 7)
+            "2026-10-29T10:00:00Z", // 2026-W44 (jour 8)
+            "2026-10-30T10:00:00Z", // 2026-W44 (jour 9)
+            "2026-11-02T10:00:00Z", // 2026-W45 (jour 10, 6e semaine)
+        ];
+
+        for iso in simulated_dates {
+            let dt = chrono::DateTime::parse_from_rfc3339(iso)
+                .expect("date rfc3339 valide")
+                .with_timezone(&Utc);
+            let report =
+                run_scheduled_or_exit_backup(&conn, &db_path, dt, false).expect("backup auto");
+            assert!(report.performed);
+        }
+
+        // Un second appel le même jour avec force = false ne refait pas la sauvegarde inutilement
+        let last_dt = chrono::DateTime::parse_from_rfc3339("2026-11-02T18:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let skip_report =
+            run_scheduled_or_exit_backup(&conn, &db_path, last_dt, false).expect("skip backup");
+        assert!(!skip_report.performed);
+
+        // En revanche, avec force = true (ex: fermeture de l'application), la sauvegarde est exécutée
+        let exit_report =
+            run_scheduled_or_exit_backup(&conn, &db_path, last_dt, true).expect("exit backup");
+        assert!(exit_report.performed);
+        assert_eq!(exit_report.rotation.daily_kept, 7);
+        assert_eq!(exit_report.rotation.weekly_kept, 4);
+
+        let listed = list_backup_files(&conn, &db_path).expect("liste des backups");
+        let dailies: Vec<&BackupFileInfo> = listed.iter().filter(|b| b.kind == "daily").collect();
+        let weeklies: Vec<&BackupFileInfo> = listed.iter().filter(|b| b.kind == "weekly").collect();
+
+        assert_eq!(
+            dailies.len(),
+            7,
+            "La rotation doit conserver exactement 7 sauvegardes quotidiennes [BKP-2]"
+        );
+        assert_eq!(
+            weeklies.len(),
+            4,
+            "La rotation doit conserver exactement 4 sauvegardes hebdomadaires [BKP-2]"
+        );
+
+        // Vérifier que les fichiers conservés sont bien les plus récents
+        assert_eq!(dailies[0].filename, "daily-2026-11-02.db");
+        assert_eq!(weeklies[0].filename, "weekly-2026-W45.db");
+
+        // Vérifier que la sauvegarde en ligne SQLite est une base valide contenant la tâche créée
+        let latest_daily_conn =
+            Connection::open(&dailies[0].path).expect("ouverture de la sauvegarde quotidienne");
+        let backed_up_task = get_task_by_id(&latest_daily_conn, &task.id)
+            .expect("lecture tâche dans backup")
+            .expect("tâche présente dans backup");
+        assert_eq!(backed_up_task.title, "Tâche sauvegardée en ligne");
+    }
+
+    #[test]
+    fn test_bkp3_full_json_export_and_reimport_validation() {
+        let tmp_dir = TempDir::new().expect("création dossier temporaire");
+        let db_path = tmp_dir.path().join("dashboard.db");
+        let (conn, _) = initialize_database(&db_path).expect("init db");
+
+        let cat = create_category(
+            &conn,
+            CreateCategoryInput {
+                name: "Recherche".to_string(),
+                alias: Some("rech".to_string()),
+                color: Some("--cat-2".to_string()),
+                position: Some(10),
+            },
+        )
+        .expect("création catégorie");
+
+        let t1 = create_task(
+            &conn,
+            CreateTaskInput {
+                title: "Lire article distribué".to_string(),
+                notes: Some("Section consensus".to_string()),
+                category_id: Some(cat.id.clone()),
+                priority: Some(2),
+                due_date: Some("2026-11-05".to_string()),
+                estimated_minutes: Some(45),
+                ..Default::default()
+            },
+        )
+        .expect("création tâche");
+
+        add_focus_item(&conn, "2026-11-05", &t1.id).expect("ajout focus");
+
+        conn.execute(
+            "INSERT INTO calendar_sources (id, name, source_type, location_or_keychain_ref, refresh_interval_minutes, created_at, updated_at)
+             VALUES ('src-1', 'Calendrier Univ', 'file', '/tmp/univ.ics', 30, '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z')",
+            [],
+        )
+        .expect("insertion source calendrier");
+
+        conn.execute(
+            "INSERT INTO calendar_events (id, source_id, ics_uid, title, start_at, end_at, is_all_day, location, notes, rrule, exdates_json)
+             VALUES ('evt-1', 'src-1', 'uid-123', 'Cours Architecture', '2026-11-05T08:00:00Z', '2026-11-05T10:00:00Z', 0, 'Amphi A', 'Notes', NULL, '[]')",
+            [],
+        )
+        .expect("insertion événement calendrier");
+
+        conn.execute(
+            "INSERT INTO launcher_items (id, label, item_type, target, icon, is_pinned, group_name, position, created_at, updated_at, device_id)
+             VALUES ('lnc-1', 'Obsidian', 'uri_scheme', 'obsidian://open', 'book', 1, 'Notes', 1, '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', 'local-device')",
+            [],
+        )
+        .expect("insertion launcher item");
+
+        conn.execute(
+            "INSERT INTO commands (id, label, alias, action_type, action_target, template_text, shortcut, created_at, updated_at, device_id)
+             VALUES ('cmd-1', 'Modèle Sport', 'sp', 'capture_template', 'capture', 'Séance #sport @auj ~1h', NULL, '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', 'local-device')",
+            [],
+        )
+        .expect("insertion commande");
+
+        let json_str = export_full_database_pretty_json(&conn).expect("export JSON complet");
+        assert!(json_str.contains("\"productivity-dashboard-backup-v1\""));
+
+        let parsed = parse_full_database_json(&json_str).expect("JSON 100 % réimportable");
+        assert_eq!(parsed.format, EXPORT_FORMAT_V1);
+        assert_eq!(parsed.schema_version, 4);
+        assert_eq!(parsed.categories.len(), 6); // 5 par défaut + Recherche
+        assert_eq!(parsed.tasks.len(), 1);
+        assert_eq!(parsed.tasks[0].title, "Lire article distribué");
+        assert_eq!(parsed.focus_items.len(), 1);
+        assert_eq!(parsed.calendar_sources.len(), 1);
+        assert_eq!(parsed.calendar_events.len(), 1);
+        assert_eq!(parsed.launcher_items.len(), 1);
+        assert_eq!(parsed.commands.len(), 1);
+        assert!(!parsed.settings.is_empty());
+    }
+
+    #[test]
+    fn test_foc3_uncompleted_past_focus_items_never_auto_copied() {
+        let tmp_dir = TempDir::new().expect("création dossier temporaire");
+        let db_path = tmp_dir.path().join("dashboard.db");
+        let (conn, _) = initialize_database(&db_path).expect("init db");
+
+        let t_done = create_task(
+            &conn,
+            CreateTaskInput {
+                title: "Tâche d'hier terminée".to_string(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let t_uncompleted = create_task(
+            &conn,
+            CreateTaskInput {
+                title: "Tâche d'hier non terminée".to_string(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let t_today = create_task(
+            &conn,
+            CreateTaskInput {
+                title: "Tâche d'aujourd'hui".to_string(),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        add_focus_item(&conn, "2026-11-01", &t_done.id).unwrap();
+        add_focus_item(&conn, "2026-11-01", &t_uncompleted.id).unwrap();
+        complete_task(&conn, &t_done.id, true).unwrap();
+
+        add_focus_item(&conn, "2026-11-02", &t_today.id).unwrap();
+
+        // Vérifier que la tâche non terminée d'hier n'est JAMAIS copiée automatiquement dans 2026-11-02 [FOC-3]
+        let today_focus = query_focus_items_by_day(&conn, "2026-11-02").unwrap();
+        assert_eq!(today_focus.len(), 1);
+        assert_eq!(today_focus[0].task_id, t_today.id);
+
+        // Vérifier que query_uncompleted_past_focus_items retourne uniquement la tâche non terminée des jours passés
+        let past_uncompleted =
+            query_uncompleted_past_focus_items(&conn, "2026-11-02").expect("requête FOC-3");
+        assert_eq!(past_uncompleted.len(), 1);
+        assert_eq!(past_uncompleted[0].task_id, t_uncompleted.id);
+        assert_eq!(past_uncompleted[0].focus_day, "2026-11-01");
     }
 }

@@ -120,6 +120,45 @@ export interface PurgeReport {
   total_purged: number;
 }
 
+export interface RotationReport {
+  daily_kept: number;
+  daily_deleted: number;
+  weekly_kept: number;
+  weekly_deleted: number;
+  deleted_files: string[];
+}
+
+export interface BackupReport {
+  performed: boolean;
+  backup_dir: string;
+  daily_backup_path: string | null;
+  weekly_backup_path: string | null;
+  backup_date: string;
+  rotation: RotationReport;
+}
+
+export interface BackupFileInfo {
+  filename: string;
+  path: string;
+  kind: 'daily' | 'weekly' | 'pre_migration' | string;
+  size_bytes: number;
+  modified_at: string;
+}
+
+export interface FullDatabaseExport {
+  format: string;
+  schema_version: number;
+  exported_at: string;
+  categories: CategoryRecord[];
+  tasks: TaskRecord[];
+  focus_items: FocusItemRecord[];
+  calendar_sources: unknown[];
+  calendar_events: unknown[];
+  launcher_items: unknown[];
+  commands: unknown[];
+  settings: SettingRecord[];
+}
+
 export interface DbStatus {
   db_path: string;
   schema_version: number;
@@ -140,6 +179,8 @@ export interface DefaultSettingsMap {
   briefing_time: string;
   last_briefing_date: string | null;
   global_capture_shortcut: string;
+  backup_dir: string;
+  last_auto_backup_date: string | null;
   [key: string]: unknown;
 }
 
@@ -160,6 +201,8 @@ const DEFAULT_SETTINGS: DefaultSettingsMap = {
   briefing_time: '08:00',
   last_briefing_date: null,
   global_capture_shortcut: 'CommandOrControl+Shift+Space',
+  backup_dir: '',
+  last_auto_backup_date: null,
 };
 
 const DEFAULT_CATEGORIES: CategoryRecord[] = [
@@ -230,12 +273,14 @@ interface BrowserDbSnapshot {
   categories: CategoryRecord[];
   tasks: TaskRecord[];
   focusItems: FocusItemRecord[];
+  backups?: BackupFileInfo[];
 }
 
 let memorySettingsStore: Map<string, SettingRecord> = new Map();
 let memoryCategoriesStore: Map<string, CategoryRecord> = new Map();
 let memoryTasksStore: Map<string, TaskRecord> = new Map();
 let memoryFocusStore: Map<string, FocusItemRecord> = new Map();
+let memoryBackupsStore: BackupFileInfo[] = [];
 let memoryCounter = 1;
 
 function nextId(prefix: string): string {
@@ -274,6 +319,7 @@ function saveBrowserStoreToLocalStorage(): void {
       categories: Array.from(memoryCategoriesStore.values()),
       tasks: Array.from(memoryTasksStore.values()),
       focusItems: Array.from(memoryFocusStore.values()),
+      backups: [...memoryBackupsStore],
     };
     window.localStorage.setItem(BROWSER_STORAGE_KEY, JSON.stringify(snapshot));
   } catch {
@@ -316,6 +362,7 @@ function loadBrowserStoreFromLocalStorage(): boolean {
         memoryFocusStore.set(f.id, f);
       }
     }
+    memoryBackupsStore = Array.isArray(parsed.backups) ? parsed.backups : [];
     return true;
   } catch {
     return false;
@@ -578,6 +625,7 @@ export function resetMemoryFallbackStore(): void {
   memoryCategoriesStore = createInitialCategoriesMap();
   memoryTasksStore = new Map();
   memoryFocusStore = new Map();
+  memoryBackupsStore = [];
 }
 
 // ============================================================================
@@ -701,6 +749,8 @@ export async function getAppSettings(): Promise<AppSettings> {
     briefing_time,
     last_briefing_date,
     global_capture_shortcut,
+    backup_dir,
+    last_auto_backup_date,
   ] = await Promise.all([
     getSettingValue<ThemeMode>('theme', DEFAULT_SETTINGS.theme),
     getSettingValue<string>('active_palette', DEFAULT_SETTINGS.active_palette),
@@ -728,6 +778,11 @@ export async function getAppSettings(): Promise<AppSettings> {
       'global_capture_shortcut',
       DEFAULT_SETTINGS.global_capture_shortcut,
     ),
+    getSettingValue<string>('backup_dir', DEFAULT_SETTINGS.backup_dir),
+    getSettingValue<string | null>(
+      'last_auto_backup_date',
+      DEFAULT_SETTINGS.last_auto_backup_date,
+    ),
   ]);
 
   return {
@@ -742,6 +797,8 @@ export async function getAppSettings(): Promise<AppSettings> {
     briefing_time,
     last_briefing_date,
     global_capture_shortcut,
+    backup_dir,
+    last_auto_backup_date,
   };
 }
 
@@ -1218,6 +1275,242 @@ export async function reorderFocusItems(
   return listFocusItems(focusDay);
 }
 
+/**
+ * FOC-3 : Liste les éléments Focus non terminés des jours strictement antérieurs à `beforeFocusDay`
+ * (`focus_day < beforeFocusDay`), dont l'issue n'est ni `'completed'` ni `'abandoned'`,
+ * et dont la tâche associée est active et non terminée (`status !== 'done' && status !== 'cancelled'`).
+ */
+export async function listUncompletedPastFocusItems(
+  beforeFocusDay: string,
+): Promise<FocusItemRecord[]> {
+  if (isTauriRuntime()) {
+    return invoke<FocusItemRecord[]>('list_uncompleted_past_focus_items', {
+      beforeFocusDay,
+      before_focus_day: beforeFocusDay,
+    });
+  }
+  return Array.from(memoryFocusStore.values())
+    .filter((item) => {
+      if (item.deleted_at !== null || item.focus_day >= beforeFocusDay) {
+        return false;
+      }
+      if (item.outcome === 'completed' || item.outcome === 'abandoned') {
+        return false;
+      }
+      const task = memoryTasksStore.get(item.task_id);
+      if (
+        !task ||
+        task.deleted_at !== null ||
+        task.status === 'done' ||
+        task.status === 'cancelled'
+      ) {
+        return false;
+      }
+      return true;
+    })
+    .sort((a, b) => {
+      if (a.focus_day !== b.focus_day) {
+        return b.focus_day.localeCompare(a.focus_day);
+      }
+      return a.position - b.position;
+    })
+    .map((f) => ({ ...f }));
+}
+
+// ============================================================================
+// Sauvegardes automatiques, Rotation 7j/4sem & Export JSON [BKP-1, BKP-2, BKP-3]
+// ============================================================================
+
+export const EXPORT_FORMAT_V1 = 'productivity-dashboard-backup-v1';
+const MAX_DAILY_BACKUPS = 7;
+const MAX_WEEKLY_BACKUPS = 4;
+
+function getIsoWeekLabel(dateObj: Date): string {
+  const utc = new Date(
+    Date.UTC(
+      dateObj.getUTCFullYear(),
+      dateObj.getUTCMonth(),
+      dateObj.getUTCDate(),
+    ),
+  );
+  const dayNum = utc.getUTCDay() || 7;
+  utc.setUTCDate(utc.getUTCDate() + 4 - dayNum);
+  const yearStart = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil(
+    ((utc.getTime() - yearStart.getTime()) / 86400000 + 1) / 7,
+  );
+  return `${utc.getUTCFullYear()}-W${String(weekNo).padStart(2, '0')}`;
+}
+
+function rotateMemoryBackups(): RotationReport {
+  const dailies = memoryBackupsStore
+    .filter((b) => b.kind === 'daily')
+    .sort((a, b) => b.filename.localeCompare(a.filename));
+  const weeklies = memoryBackupsStore
+    .filter((b) => b.kind === 'weekly')
+    .sort((a, b) => b.filename.localeCompare(a.filename));
+  const others = memoryBackupsStore.filter(
+    (b) => b.kind !== 'daily' && b.kind !== 'weekly',
+  );
+
+  const keptDailies = dailies.slice(0, MAX_DAILY_BACKUPS);
+  const deletedDailies = dailies.slice(MAX_DAILY_BACKUPS);
+
+  const keptWeeklies = weeklies.slice(0, MAX_WEEKLY_BACKUPS);
+  const deletedWeeklies = weeklies.slice(MAX_WEEKLY_BACKUPS);
+
+  memoryBackupsStore = [...keptDailies, ...keptWeeklies, ...others].sort(
+    (a, b) => b.filename.localeCompare(a.filename),
+  );
+
+  return {
+    daily_kept: keptDailies.length,
+    daily_deleted: deletedDailies.length,
+    weekly_kept: keptWeeklies.length,
+    weekly_deleted: deletedWeeklies.length,
+    deleted_files: [
+      ...deletedDailies.map((d) => d.filename),
+      ...deletedWeeklies.map((w) => w.filename),
+    ],
+  };
+}
+
+export async function triggerBackup(force = true): Promise<BackupReport> {
+  if (isTauriRuntime()) {
+    return invoke<BackupReport>('trigger_backup', { force });
+  }
+  const now = new Date();
+  const dateStr = now.toISOString().slice(0, 10);
+  const weekStr = getIsoWeekLabel(now);
+  const configuredDir = await getSettingValue<string>(
+    'backup_dir',
+    DEFAULT_SETTINGS.backup_dir,
+  );
+  const backupDir = configuredDir.trim() || 'memory://backups';
+
+  const dailyFilename = `daily-${dateStr}.db`;
+  const weeklyFilename = `weekly-${weekStr}.db`;
+  const dailyPath = `${backupDir}/${dailyFilename}`;
+  const weeklyPath = `${backupDir}/${weeklyFilename}`;
+
+  const lastAutoDate = await getSettingValue<string | null>(
+    'last_auto_backup_date',
+    null,
+  );
+  const hasDaily = memoryBackupsStore.some((b) => b.filename === dailyFilename);
+  const hasWeekly = memoryBackupsStore.some(
+    (b) => b.filename === weeklyFilename,
+  );
+
+  if (!force && lastAutoDate === dateStr && hasDaily && hasWeekly) {
+    const rotation = rotateMemoryBackups();
+    return {
+      performed: false,
+      backup_dir: backupDir,
+      daily_backup_path: dailyPath,
+      weekly_backup_path: weeklyPath,
+      backup_date: dateStr,
+      rotation,
+    };
+  }
+
+  await setSettingValue('last_auto_backup_date', dateStr);
+  const nowIso = now.toISOString();
+  const approxSize = 4096 + memoryTasksStore.size * 256;
+
+  memoryBackupsStore = memoryBackupsStore.filter(
+    (b) => b.filename !== dailyFilename && b.filename !== weeklyFilename,
+  );
+  memoryBackupsStore.push(
+    {
+      filename: dailyFilename,
+      path: dailyPath,
+      kind: 'daily',
+      size_bytes: approxSize,
+      modified_at: nowIso,
+    },
+    {
+      filename: weeklyFilename,
+      path: weeklyPath,
+      kind: 'weekly',
+      size_bytes: approxSize,
+      modified_at: nowIso,
+    },
+  );
+
+  const rotation = rotateMemoryBackups();
+  saveBrowserStoreToLocalStorage();
+
+  return {
+    performed: true,
+    backup_dir: backupDir,
+    daily_backup_path: dailyPath,
+    weekly_backup_path: weeklyPath,
+    backup_date: dateStr,
+    rotation,
+  };
+}
+
+export async function listBackups(): Promise<BackupFileInfo[]> {
+  if (isTauriRuntime()) {
+    return invoke<BackupFileInfo[]>('list_backups');
+  }
+  return [...memoryBackupsStore].sort((a, b) =>
+    b.filename.localeCompare(a.filename),
+  );
+}
+
+export async function setBackupDir(backupDir: string): Promise<string> {
+  const trimmed = backupDir.trim();
+  if (isTauriRuntime()) {
+    const rec = await invoke<SettingRecord>('set_backup_dir', {
+      backupDir: trimmed,
+      backup_dir: trimmed,
+    });
+    try {
+      return JSON.parse(rec.value_json) as string;
+    } catch {
+      return trimmed;
+    }
+  }
+  await setSettingValue('backup_dir', trimmed);
+  return trimmed;
+}
+
+export async function exportFullJson(destPath?: string): Promise<string> {
+  if (isTauriRuntime()) {
+    return invoke<string>('export_full_json', {
+      destPath,
+      dest_path: destPath,
+    });
+  }
+  const payload: FullDatabaseExport = {
+    format: EXPORT_FORMAT_V1,
+    schema_version: 4,
+    exported_at: new Date().toISOString(),
+    categories: Array.from(memoryCategoriesStore.values()).sort(
+      (a, b) => a.position - b.position,
+    ),
+    tasks: Array.from(memoryTasksStore.values()).sort((a, b) =>
+      a.created_at.localeCompare(b.created_at),
+    ),
+    focus_items: Array.from(memoryFocusStore.values()).sort((a, b) => {
+      if (a.focus_day !== b.focus_day) {
+        return a.focus_day.localeCompare(b.focus_day);
+      }
+      return a.position - b.position;
+    }),
+    calendar_sources: [],
+    calendar_events: [],
+    launcher_items: [],
+    commands: [],
+    settings: Array.from(memorySettingsStore.values()).sort((a, b) =>
+      a.key.localeCompare(b.key),
+    ),
+  };
+  return JSON.stringify(payload, null, 2);
+}
+
 // ============================================================================
 // Demo Data Seeding (hors production, fidèle aux maquettes)
 // ============================================================================
@@ -1240,7 +1533,7 @@ export async function getDbStatus(): Promise<DbStatus> {
   }
   return {
     db_path: 'memory://dashboard.db',
-    schema_version: 3,
+    schema_version: 4,
     tables_verified: [
       'categories',
       'tasks',

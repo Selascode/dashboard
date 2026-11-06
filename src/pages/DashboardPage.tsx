@@ -14,6 +14,7 @@ import {
   Plus,
   RotateCcw,
   Scan,
+  Sparkles,
   Sun,
   X,
 } from 'lucide-react';
@@ -24,13 +25,25 @@ import {
   CategoryRecord,
   FocusItemRecord,
   TaskRecord,
+  addFocusItem,
   completeTask,
   getCategories,
   listFocusItems,
   listTasks,
+  listUncompletedPastFocusItems,
   removeFocusItem,
   reorderFocusItems,
 } from '../lib/db';
+import {
+  NowModeSessionState,
+  canAddTaskToFocus,
+  computeFocusProgress,
+  createNowModeSession,
+  formatNowModeTimer,
+  getUnfinishedPreviousFocusTasks,
+  moveFocusItemInList,
+  tickNowModeTimer,
+} from '../lib/focus-engine';
 import {
   formatDateByPreference,
   formatEditorialDateFr,
@@ -41,6 +54,7 @@ interface DashboardPageProps {
   onNavigateAgenda?: () => void;
   onNavigateTasks?: () => void;
   onNavigateSettings?: () => void;
+  onOpenBriefing?: () => void;
   onNewTask?: () => void;
   onPushUndo?: (action: UndoAction) => void;
 }
@@ -53,6 +67,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   onNavigateAgenda,
   onNavigateTasks,
   onNavigateSettings,
+  onOpenBriefing,
   onNewTask,
   onPushUndo,
 }) => {
@@ -62,12 +77,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [categories, setCategories] = useState<CategoryRecord[]>([]);
   const [focusItems, setFocusItems] = useState<FocusItemRecord[]>([]);
+  const [pastFocusItems, setPastFocusItems] = useState<FocusItemRecord[]>([]);
+  const [focusLimitAlert, setFocusLimitAlert] = useState<string | null>(null);
   const [deadlinesFilter, setDeadlinesFilter] = useState<'upcoming' | 'overdue'>(
     'upcoming',
   );
-  const [nowModeTaskId, setNowModeTaskId] = useState<string | null>(null);
-  const [timerSeconds, setTimerSeconds] = useState<number>(25 * 60);
-  const [timerRunning, setTimerRunning] = useState<boolean>(false);
+  const [nowSession, setNowSession] = useState<NowModeSessionState | null>(null);
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -85,14 +100,17 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   }, []);
 
   const loadDashboardData = useCallback(async () => {
-    const [loadedTasks, loadedCategories, loadedFocus] = await Promise.all([
-      listTasks(),
-      getCategories(),
-      listFocusItems(REFERENCE_TODAY),
-    ]);
+    const [loadedTasks, loadedCategories, loadedFocus, loadedPastFocus] =
+      await Promise.all([
+        listTasks(),
+        getCategories(),
+        listFocusItems(REFERENCE_TODAY),
+        listUncompletedPastFocusItems(REFERENCE_TODAY),
+      ]);
     setTasks(loadedTasks);
     setCategories(loadedCategories);
     setFocusItems(loadedFocus);
+    setPastFocusItems(loadedPastFocus);
   }, []);
 
   useEffect(() => {
@@ -100,14 +118,25 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   }, [loadDashboardData]);
 
   useEffect(() => {
-    if (!timerRunning) {
+    if (!nowSession || !nowSession.isRunning) {
       return undefined;
     }
     const interval = window.setInterval(() => {
-      setTimerSeconds((prev) => (prev > 0 ? prev - 1 : 0));
+      setNowSession((prev) => {
+        if (!prev || !prev.isRunning) {
+          return prev;
+        }
+        const nextTick = tickNowModeTimer(prev.remainingSeconds, 1);
+        return {
+          ...prev,
+          remainingSeconds: nextTick.remainingSeconds,
+          isFinished: nextTick.isFinished,
+          isRunning: !nextTick.isFinished,
+        };
+      });
     }, 1000);
     return () => window.clearInterval(interval);
-  }, [timerRunning]);
+  }, [nowSession]);
 
   const greetingText = userName.trim()
     ? formatTranslation(t.dashboard.greetingWithName, { name: userName.trim() })
@@ -117,6 +146,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     categories.map((c) => [c.id, c]),
   );
   const taskById = new Map<string, TaskRecord>(tasks.map((tk) => [tk.id, tk]));
+  const focusTaskIds = new Set<string>(focusItems.map((item) => item.task_id));
 
   const focusEntries = focusItems
     .map((item) => {
@@ -127,9 +157,13 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       Boolean(entry),
     );
 
-  const completedFocusCount = focusEntries.filter(
-    ({ item, task }) => item.outcome === 'completed' || task.status === 'done',
-  ).length;
+  const focusProgress = computeFocusProgress(focusItems, taskById);
+
+  const unfinishedPastEntries = getUnfinishedPreviousFocusTasks(
+    [...focusItems, ...pastFocusItems],
+    taskById,
+    REFERENCE_TODAY,
+  );
 
   const activeTodoTasks = tasks.filter(
     (tk) => tk.status !== 'done' && tk.status !== 'cancelled',
@@ -149,9 +183,14 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     await completeTask(task.id, nextCompleted);
     await loadDashboardData();
     onPushUndo?.({
+      kind: 'complete_task',
       description: task.title,
       undo: async () => {
         await completeTask(task.id, !nextCompleted);
+        await loadDashboardData();
+      },
+      redo: async () => {
+        await completeTask(task.id, nextCompleted);
         await loadDashboardData();
       },
     });
@@ -162,21 +201,108 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
     if (targetIndex < 0 || targetIndex >= focusEntries.length) {
       return;
     }
-    const orderedIds = focusEntries.map((e) => e.task.id);
-    const [moved] = orderedIds.splice(index, 1);
-    orderedIds.splice(targetIndex, 0, moved);
-    await reorderFocusItems(REFERENCE_TODAY, orderedIds);
+    const previousOrderedIds = focusEntries.map((e) => e.task.id);
+    const nextOrderedIds = moveFocusItemInList(
+      previousOrderedIds,
+      index,
+      targetIndex,
+    );
+    await reorderFocusItems(REFERENCE_TODAY, nextOrderedIds);
     await loadDashboardData();
+    onPushUndo?.({
+      kind: 'reorder_focus',
+      description: focusEntries[index].task.title,
+      undo: async () => {
+        await reorderFocusItems(REFERENCE_TODAY, previousOrderedIds);
+        await loadDashboardData();
+      },
+      redo: async () => {
+        await reorderFocusItems(REFERENCE_TODAY, nextOrderedIds);
+        await loadDashboardData();
+      },
+    });
+  };
+
+  const handleAddTaskToFocus = async (task: TaskRecord) => {
+    const validation = canAddTaskToFocus(focusItems, task, REFERENCE_TODAY);
+    if (!validation.allowed) {
+      setFocusLimitAlert(
+        validation.reason === 'limit_reached'
+          ? t.dashboard.focusZone.limitReached
+          : (validation.messageFr ?? t.dashboard.focusZone.limitReached),
+      );
+      return;
+    }
+    try {
+      await addFocusItem(REFERENCE_TODAY, task.id);
+      setFocusLimitAlert(null);
+      await loadDashboardData();
+      onPushUndo?.({
+        kind: 'toggle_focus',
+        description: task.title,
+        undo: async () => {
+          await removeFocusItem(REFERENCE_TODAY, task.id);
+          await loadDashboardData();
+        },
+        redo: async () => {
+          await addFocusItem(REFERENCE_TODAY, task.id);
+          await loadDashboardData();
+        },
+      });
+    } catch {
+      setFocusLimitAlert(t.dashboard.focusZone.limitReached);
+    }
   };
 
   const handleRemoveFromFocus = async (taskId: string) => {
+    const task = taskById.get(taskId);
     await removeFocusItem(REFERENCE_TODAY, taskId);
     await loadDashboardData();
+    if (task) {
+      onPushUndo?.({
+        kind: 'toggle_focus',
+        description: task.title,
+        undo: async () => {
+          await addFocusItem(REFERENCE_TODAY, taskId);
+          await loadDashboardData();
+        },
+        redo: async () => {
+          await removeFocusItem(REFERENCE_TODAY, taskId);
+          await loadDashboardData();
+        },
+      });
+    }
   };
 
-  const nowModeTask = nowModeTaskId ? taskById.get(nowModeTaskId) ?? null : null;
-  const timerMinutesStr = String(Math.floor(timerSeconds / 60)).padStart(2, '0');
-  const timerSecondsStr = String(timerSeconds % 60).padStart(2, '0');
+  const openNowModeForTask = (task: TaskRecord) => {
+    setNowSession(createNowModeSession(task));
+  };
+
+  const handleCompleteNowModeTask = async () => {
+    if (!nowSession) {
+      return;
+    }
+    const task = taskById.get(nowSession.taskId);
+    if (!task) {
+      setNowSession(null);
+      return;
+    }
+    setNowSession(null);
+    await completeTask(task.id, true);
+    await loadDashboardData();
+    onPushUndo?.({
+      kind: 'complete_task',
+      description: task.title,
+      undo: async () => {
+        await completeTask(task.id, false);
+        await loadDashboardData();
+      },
+      redo: async () => {
+        await completeTask(task.id, true);
+        await loadDashboardData();
+      },
+    });
+  };
 
   return (
     <div data-testid="page-dashboard" className="flex flex-col h-full gap-6">
@@ -212,7 +338,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
       </header>
 
       {/* Mode Maintenant (FOC-4) en superposition plein cadre */}
-      {nowModeTask && (
+      {nowSession && (
         <section
           data-testid="focus-now-mode"
           aria-label={t.dashboard.focusZone.nowModeHeading}
@@ -222,33 +348,61 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             {t.dashboard.focusZone.nowModeHeading}
           </span>
           <h2 className="text-2xl font-display font-bold text-primary max-w-xl">
-            {nowModeTask.title}
+            {nowSession.title}
           </h2>
-          {nowModeTask.notes && (
-            <p className="text-sm text-secondary max-w-md">{nowModeTask.notes}</p>
+          {nowSession.notes && (
+            <p className="text-sm text-secondary max-w-md">{nowSession.notes}</p>
           )}
-          <div className="text-4xl font-mono font-bold text-primary my-2">
-            {timerMinutesStr}:{timerSecondsStr}
+          <div
+            data-testid="now-mode-timer-display"
+            className="text-4xl font-mono font-bold text-primary my-2"
+          >
+            {formatNowModeTimer(nowSession.remainingSeconds)}
           </div>
           <div className="flex flex-wrap items-center justify-center gap-3">
             <button
               type="button"
-              onClick={() => setTimerRunning((r) => !r)}
+              data-testid="now-mode-toggle-timer-btn"
+              onClick={() =>
+                setNowSession((prev) =>
+                  prev ? { ...prev, isRunning: !prev.isRunning } : null,
+                )
+              }
               className="inline-flex items-center gap-2 rounded-full bg-accent-primary px-5 py-2 text-xs font-semibold text-accent-foreground"
             >
               <Play className="h-3.5 w-3.5" aria-hidden="true" />
               <span>
-                {timerRunning
+                {nowSession.isRunning
                   ? t.dashboard.focusZone.nowModeTimerPause
-                  : t.dashboard.focusZone.nowModeTimerStart}
+                  : `${t.dashboard.focusZone.nowModeTimerStart} ${nowSession.durationMinutes} min`}
               </span>
             </button>
             <button
               type="button"
+              data-testid="now-mode-complete-btn"
               onClick={() => {
-                setTimerRunning(false);
-                setTimerSeconds(25 * 60);
+                void handleCompleteNowModeTask();
               }}
+              className="inline-flex items-center gap-1.5 rounded-full border border-subtle bg-surface-muted px-4 py-2 text-xs font-semibold text-primary hover:bg-surface"
+            >
+              <Check className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>{t.dashboard.focusZone.nowModeComplete}</span>
+            </button>
+            <button
+              type="button"
+              data-testid="now-mode-reset-timer-btn"
+              onClick={() =>
+                setNowSession((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        isRunning: false,
+                        isFinished: false,
+                        remainingSeconds: prev.totalSeconds,
+                      }
+                    : null,
+                )
+              }
               className="inline-flex items-center gap-1.5 rounded-full border border-subtle bg-surface px-4 py-2 text-xs font-semibold text-primary hover:bg-surface-muted"
             >
               <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
@@ -256,13 +410,96 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => setNowModeTaskId(null)}
+              data-testid="now-mode-exit-btn"
+              onClick={() => setNowSession(null)}
               className="inline-flex items-center gap-1.5 rounded-full border border-subtle bg-surface px-4 py-2 text-xs font-semibold text-secondary hover:text-primary"
             >
               <X className="h-3.5 w-3.5" aria-hidden="true" />
               <span>{t.dashboard.focusZone.nowModeExit}</span>
             </button>
           </div>
+        </section>
+      )}
+
+      {focusLimitAlert && (
+        <div
+          role="alert"
+          data-testid="dashboard-focus-limit-alert"
+          className="flex items-center justify-between rounded-2xl border border-danger bg-surface px-4 py-2.5 text-xs font-semibold text-danger"
+        >
+          <span>{focusLimitAlert}</span>
+          <button
+            type="button"
+            onClick={() => setFocusLimitAlert(null)}
+            aria-label={t.app.close}
+          >
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        </div>
+      )}
+
+      {/* FOC-3 : Rétention des tâches du Focus de la veille non terminées */}
+      {unfinishedPastEntries.length > 0 && (
+        <section
+          data-testid="unfinished-yesterday-focus-banner"
+          aria-label={t.dashboard.focusZone.unfinishedPastTitle}
+          className="rounded-3xl border border-subtle bg-surface p-4 flex flex-col gap-3"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2.5">
+              <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl border border-subtle bg-surface-muted text-primary">
+                <Sparkles className="h-4 w-4" aria-hidden="true" />
+              </span>
+              <div>
+                <h2 className="text-xs font-display font-bold text-primary">
+                  {t.dashboard.focusZone.unfinishedPastTitle} (
+                  {unfinishedPastEntries.length})
+                </h2>
+                <p className="text-[11px] text-secondary">
+                  {t.dashboard.focusZone.unfinishedPastSubtitle}
+                </p>
+              </div>
+            </div>
+            {onOpenBriefing && (
+              <button
+                type="button"
+                data-testid="unfinished-past-open-briefing-btn"
+                onClick={onOpenBriefing}
+                className="rounded-full border border-subtle bg-surface-muted px-3 py-1 text-xs font-semibold text-primary hover:bg-surface transition-colors"
+              >
+                {t.dashboard.focusZone.openBriefingButton}
+              </button>
+            )}
+          </div>
+          <ul className="divide-y divide-subtle">
+            {unfinishedPastEntries.map(({ task, previousFocusDay }) => (
+              <li
+                key={`${previousFocusDay}-${task.id}`}
+                data-testid={`unfinished-past-focus-item-${task.id}`}
+                className="flex items-center justify-between gap-3 py-2 text-xs"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="font-semibold text-primary truncate">
+                    {task.title}
+                  </span>
+                  <span className="text-[11px] text-secondary shrink-0">
+                    ({formatDateByPreference(previousFocusDay, dateFormat)})
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  data-testid={`resume-past-focus-btn-${task.id}`}
+                  onClick={() => {
+                    void handleAddTaskToFocus(task);
+                  }}
+                  className="inline-flex items-center gap-1 rounded-full bg-accent-primary px-3 py-1 text-[11px] font-semibold text-accent-foreground shrink-0"
+                >
+                  <Plus className="h-3 w-3" aria-hidden="true" />
+                  <span>{t.dashboard.focusZone.resumeTaskButton}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
 
@@ -300,7 +537,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 <button
                   type="button"
                   data-testid="focus-now-mode-trigger"
-                  onClick={() => setNowModeTaskId(focusEntries[0].task.id)}
+                  onClick={() => openNowModeForTask(focusEntries[0].task)}
                   className="inline-flex items-center gap-1.5 rounded-full border border-subtle bg-surface-muted px-3 py-1.5 text-xs font-medium text-secondary hover:text-primary transition-colors"
                 >
                   <Maximize2 className="h-3.5 w-3.5" aria-hidden="true" />
@@ -312,9 +549,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 className="focus-pill-control rounded-full px-3.5 py-1.5 text-xs"
               >
                 <strong className="font-bold text-primary">
-                  {formatTranslation(t.dashboard.focusZone.progress, {
-                    count: completedFocusCount,
-                  })}
+                  {focusProgress.ratioLabel}
                 </strong>{' '}
                 <span className="text-secondary">
                   {t.dashboard.focusZone.prioritiesSuffix}
@@ -475,6 +710,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
                       <button
                         type="button"
+                        data-testid={`focus-move-up-${task.id}`}
                         aria-label={t.dashboard.focusZone.moveUp}
                         disabled={idx === 0}
                         onClick={() => {
@@ -486,6 +722,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                       </button>
                       <button
                         type="button"
+                        data-testid={`focus-move-down-${task.id}`}
                         aria-label={t.dashboard.focusZone.moveDown}
                         disabled={idx === focusEntries.length - 1}
                         onClick={() => {
@@ -497,6 +734,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                       </button>
                       <button
                         type="button"
+                        data-testid={`focus-remove-${task.id}`}
                         aria-label={t.dashboard.focusZone.removeFromFocus}
                         onClick={() => {
                           void handleRemoveFromFocus(task.id);
@@ -519,11 +757,12 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
               aria-hidden="true"
               className="flex items-center gap-1.5"
             >
-              {[0, 1, 2, 3, 4].map((segmentIndex) => (
+              {focusProgress.segments.map((seg) => (
                 <span
-                  key={segmentIndex}
+                  key={seg.index}
+                  data-state={seg.state}
                   className={`h-1.5 w-6 rounded-full transition-colors ${
-                    segmentIndex < completedFocusCount
+                    seg.state === 'completed'
                       ? 'bg-accent-primary'
                       : 'bg-surface-muted'
                   }`}
@@ -642,9 +881,11 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   onClick={() => setDeadlinesFilter('overdue')}
                   className={`rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
                     deadlinesFilter === 'overdue'
-                      ? 'border border-subtle bg-surface-muted text-primary'
+                      ? overdueTasks.length > 0
+                        ? 'border border-danger bg-surface-muted text-danger'
+                        : 'border border-subtle bg-surface-muted text-primary'
                       : overdueTasks.length > 0
-                        ? 'text-danger'
+                        ? 'border border-danger text-danger'
                         : 'text-secondary hover:bg-surface-muted'
                   }`}
                 >
@@ -678,24 +919,44 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                   {displayedDeadlines.slice(0, 3).map((tk) => {
                     const isOverdue =
                       tk.due_date !== null && tk.due_date < REFERENCE_TODAY;
+                    const isInFocus = focusTaskIds.has(tk.id);
                     return (
                       <li
                         key={tk.id}
+                        data-testid={`deadline-item-${tk.id}`}
                         className="flex items-center justify-between gap-2 py-2 text-xs"
                       >
                         <span className="font-medium text-primary line-clamp-1">
                           {tk.title}
                         </span>
-                        <span
-                          data-testid={`deadline-date-${tk.id}`}
-                          className={`shrink-0 font-medium ${
-                            isOverdue ? 'text-danger font-semibold' : 'text-secondary'
-                          }`}
-                        >
-                          {tk.due_date === REFERENCE_TODAY
-                            ? t.tasks.dueToday
-                            : formatDateByPreference(tk.due_date, dateFormat)}
-                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span
+                            data-testid={`deadline-date-${tk.id}`}
+                            className={`font-medium ${
+                              isOverdue
+                                ? 'text-danger border border-danger rounded-full px-2 py-0.5 font-semibold'
+                                : 'text-secondary'
+                            }`}
+                          >
+                            {tk.due_date === REFERENCE_TODAY
+                              ? t.tasks.dueToday
+                              : formatDateByPreference(tk.due_date, dateFormat)}
+                          </span>
+                          {!isInFocus && (
+                            <button
+                              type="button"
+                              data-testid={`deadline-add-focus-${tk.id}`}
+                              aria-label={t.dashboard.focusZone.addToFocus}
+                              title={t.dashboard.focusZone.addToFocus}
+                              onClick={() => {
+                                void handleAddTaskToFocus(tk);
+                              }}
+                              className="rounded-lg p-1 text-secondary hover:bg-surface-muted hover:text-primary transition-colors"
+                            >
+                              <Scan className="h-3.5 w-3.5" aria-hidden="true" />
+                            </button>
+                          )}
+                        </div>
                       </li>
                     );
                   })}

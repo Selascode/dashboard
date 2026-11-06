@@ -84,14 +84,21 @@
       "nowModeButton": "Mode Maintenant",
       "nowModeExit": "Quitter le mode Maintenant",
       "nowModeHeading": "En cours maintenant",
-      "nowModeTimerStart": "Démarrer 25 min",
+      "nowModeTimerStart": "Démarrer",
       "nowModeTimerPause": "Pause",
       "nowModeTimerReset": "Réinitialiser",
+      "nowModeComplete": "Terminer la tâche",
       "footerMotto": "Moins de dispersion, plus d’intention.",
       "moveUp": "Monter la priorité",
       "moveDown": "Descendre la priorité",
       "removeFromFocus": "Retirer du Focus",
-      "limitReached": "Limite atteinte : 5 priorités maximum dans le Focus du jour."
+      "addToFocus": "Ajouter au Focus",
+      "inFocusBadge": "Focus",
+      "limitReached": "Limite atteinte : 5 priorités maximum dans le Focus du jour.",
+      "unfinishedPastTitle": "Priorités de la veille non terminées",
+      "unfinishedPastSubtitle": "Elles n’ont pas été reportées automatiquement. Voulez-vous les reprendre aujourd’hui ?",
+      "resumeTaskButton": "Reprendre au Focus",
+      "openBriefingButton": "Ouvrir le Briefing"
     },
     "agendaZone": {
       "title": "Agenda du jour",
@@ -278,6 +285,22 @@
       "schemaVersion": "Version du schéma",
       "categoriesCount": "Catégories actives",
       "syncReady": "Champs de synchronisation prêts (UUID, UTC ISO 8601, suppression logique, device_id)"
+    },
+    "backup": {
+      "title": "Sauvegardes automatiques & Export de données",
+      "description": "Vos données sont sauvegardées automatiquement chaque jour et à la fermeture de l’application.",
+      "rotationPolicy": "Politique de rotation automatique : 7 sauvegardes quotidiennes et 4 hebdomadaires conservées.",
+      "dirLabel": "Dossier de destination des sauvegardes",
+      "dirPlaceholder": "Dossier par défaut (<app_data>/backups)",
+      "dirSavedFeedback": "Dossier de sauvegarde enregistré.",
+      "triggerBackupBtn": "Sauvegarder maintenant",
+      "backupSuccessFeedback": "Sauvegarde SQLite effectuée avec succès.",
+      "availableBackupsLabel": "Sauvegardes disponibles",
+      "noBackupsYet": "Aucune sauvegarde enregistrée dans cette session.",
+      "exportJsonTitle": "Export complet en JSON lisible",
+      "exportJsonDesc": "Exportez l’intégralité de vos catégories, tâches, Focus et paramètres dans un fichier JSON portable.",
+      "exportJsonBtn": "Exporter tout en JSON",
+      "exportSuccessFeedback": "Export JSON généré avec succès (format productivity-dashboard-backup-v1)."
     }
   }
 }

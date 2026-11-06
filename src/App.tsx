@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { NavPage, Sidebar } from './components/layout/Sidebar';
 import { Topbar } from './components/layout/Topbar';
 import { CommandPalette } from './components/overlays/CommandPalette';
@@ -6,6 +6,11 @@ import { ShortcutsHelpModal } from './components/overlays/ShortcutsHelpModal';
 import { ThemeProvider } from './context/ThemeContext';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { useTranslations } from './i18n';
+import {
+  CommandHistory,
+  CommandHistorySnapshot,
+  UndoCommandKind,
+} from './lib/command-history';
 import { AppScreenId, CommandId } from './lib/commands';
 import { TaskRecord, listTasks } from './lib/db';
 import { AgendaPage } from './pages/AgendaPage';
@@ -15,8 +20,10 @@ import { SettingsPage } from './pages/SettingsPage';
 import { TasksPage } from './pages/TasksPage';
 
 export interface UndoAction {
+  kind?: UndoCommandKind;
   description: string;
-  undo: () => Promise<void>;
+  undo: () => Promise<void> | void;
+  redo?: () => Promise<void> | void;
 }
 
 function getInitialScreenFromUrl(): AppScreenId {
@@ -55,23 +62,34 @@ export const AppContent: React.FC = () => {
     return null;
   });
   const [paletteTasks, setPaletteTasks] = useState<TaskRecord[]>([]);
-  const [undoStack, setUndoStack] = useState<UndoAction[]>([]);
+  const commandHistoryRef = useRef<CommandHistory>(new CommandHistory());
+  const [historySnapshot, setHistorySnapshot] =
+    useState<CommandHistorySnapshot>(() =>
+      commandHistoryRef.current.getSnapshot(),
+    );
   const [undoToastVisible, setUndoToastVisible] = useState(false);
 
+  useEffect(() => {
+    return commandHistoryRef.current.subscribe((snapshot) => {
+      setHistorySnapshot(snapshot);
+    });
+  }, []);
+
   const pushUndoAction = useCallback((action: UndoAction) => {
-    setUndoStack((prev) => [...prev, action]);
+    commandHistoryRef.current.push({
+      kind: action.kind,
+      description: action.description,
+      undo: action.undo,
+      redo: action.redo,
+    });
     setUndoToastVisible(true);
   }, []);
 
   const handleUndo = useCallback(async () => {
-    setUndoStack((prev) => {
-      if (prev.length === 0) {
-        return prev;
-      }
-      const last = prev[prev.length - 1];
-      void last.undo();
-      return prev.slice(0, -1);
-    });
+    if (!commandHistoryRef.current.canUndo()) {
+      return;
+    }
+    await commandHistoryRef.current.undo();
     setUndoToastVisible(false);
   }, []);
 
@@ -208,6 +226,7 @@ export const AppContent: React.FC = () => {
               onNavigateAgenda={() => navigateToPage('agenda')}
               onNavigateTasks={() => navigateToPage('tasks')}
               onNavigateSettings={() => navigateToPage('settings')}
+              onOpenBriefing={() => executeCommand('nav.briefing')}
               onNewTask={() => executeCommand('tasks.new')}
               onPushUndo={pushUndoAction}
             />
@@ -245,14 +264,18 @@ export const AppContent: React.FC = () => {
         </footer>
       </div>
 
-      {undoToastVisible && undoStack.length > 0 && (
+      {undoToastVisible && historySnapshot.canUndo && (
         <div
           data-testid="undo-toast"
           role="status"
           aria-live="polite"
           className="fixed bottom-6 right-8 z-40 flex items-center gap-3 rounded-full border border-subtle bg-accent-primary px-4 py-2.5 text-xs font-medium text-accent-foreground shadow-lg"
         >
-          <span>{t.app.undoToast}</span>
+          <span>
+            {historySnapshot.lastCommand?.description
+              ? `${historySnapshot.lastCommand.description} · ${t.app.undoToast}`
+              : t.app.undoToast}
+          </span>
           <button
             type="button"
             data-testid="undo-toast-btn"

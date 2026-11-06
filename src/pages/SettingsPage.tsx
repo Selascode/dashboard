@@ -1,12 +1,28 @@
 import React, { useEffect, useState } from 'react';
-import { Calendar, Monitor, Moon, Palette, Sun } from 'lucide-react';
+import {
+  Calendar,
+  Database,
+  Download,
+  FolderOpen,
+  HardDriveDownload,
+  Monitor,
+  Moon,
+  Palette,
+  Sun,
+} from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import {
+  BackupFileInfo,
   DateFormat,
   DbStatus,
+  exportFullJson,
   getCategories,
   getDbStatus,
+  getSettingValue,
+  listBackups,
+  setBackupDir,
   ThemeMode,
+  triggerBackup,
 } from '../lib/db';
 import { useTranslations } from '../i18n';
 
@@ -27,6 +43,14 @@ export const SettingsPage: React.FC = () => {
   const [dbStatus, setDbStatus] = useState<DbStatus | null>(null);
   const [categoryCount, setCategoryCount] = useState<number>(0);
   const [nameInput, setNameInput] = useState<string>(userName);
+  const [backupDirInput, setBackupDirInput] = useState<string>('');
+  const [backupFiles, setBackupFiles] = useState<BackupFileInfo[]>([]);
+  const [backupStatusMessage, setBackupStatusMessage] = useState<string | null>(
+    null,
+  );
+  const [exportedJsonPreview, setExportedJsonPreview] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     setNameInput(userName);
@@ -34,11 +58,18 @@ export const SettingsPage: React.FC = () => {
 
   useEffect(() => {
     let mounted = true;
-    Promise.all([getDbStatus(), getCategories()])
-      .then(([status, categories]) => {
+    Promise.all([
+      getDbStatus(),
+      getCategories(),
+      getSettingValue<string>('backup_dir', ''),
+      listBackups(),
+    ])
+      .then(([status, categories, currentBackupDir, currentBackups]) => {
         if (!mounted) return;
         setDbStatus(status);
         setCategoryCount(categories.length);
+        setBackupDirInput(currentBackupDir);
+        setBackupFiles(currentBackups);
       })
       .catch(() => {
         if (!mounted) return;
@@ -47,6 +78,25 @@ export const SettingsPage: React.FC = () => {
       mounted = false;
     };
   }, []);
+
+  const handleSaveBackupDir = async () => {
+    const saved = await setBackupDir(backupDirInput);
+    setBackupDirInput(saved);
+    setBackupStatusMessage(t.settings.backup.dirSavedFeedback);
+  };
+
+  const handleTriggerBackup = async () => {
+    await triggerBackup(true);
+    const updatedList = await listBackups();
+    setBackupFiles(updatedList);
+    setBackupStatusMessage(t.settings.backup.backupSuccessFeedback);
+  };
+
+  const handleExportFullJson = async () => {
+    const json = await exportFullJson();
+    setExportedJsonPreview(json);
+    setBackupStatusMessage(t.settings.backup.exportSuccessFeedback);
+  };
 
   const themeOptions: Array<{
     mode: ThemeMode;
@@ -309,6 +359,148 @@ export const SettingsPage: React.FC = () => {
         </div>
       </section>
 
+      {/* Sauvegardes automatiques & Export de données (BKP-1, BKP-2, BKP-3) */}
+      <section
+        aria-labelledby="backup-heading"
+        data-testid="settings-backup-section"
+        className="rounded-3xl border border-subtle bg-surface p-6 flex flex-col gap-5"
+      >
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <Database className="h-4 w-4 text-primary" aria-hidden="true" />
+            <h2
+              id="backup-heading"
+              className="text-base font-display font-bold text-primary"
+            >
+              {t.settings.backup.title}
+            </h2>
+          </div>
+          <p className="text-sm text-secondary">
+            {t.settings.backup.description}
+          </p>
+          <p
+            data-testid="settings-backup-rotation-policy"
+            className="text-xs font-medium text-secondary mt-1"
+          >
+            {t.settings.backup.rotationPolicy}
+          </p>
+        </div>
+
+        {/* Dossier de destination des sauvegardes (BKP-2) */}
+        <div className="flex flex-col gap-2">
+          <label
+            htmlFor="settings-backup-dir"
+            className="text-xs font-semibold text-secondary flex items-center gap-1.5"
+          >
+            <FolderOpen className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>{t.settings.backup.dirLabel}</span>
+          </label>
+          <div className="flex flex-wrap items-center gap-3 max-w-xl">
+            <input
+              id="settings-backup-dir"
+              type="text"
+              data-testid="settings-backup-dir-input"
+              value={backupDirInput}
+              placeholder={t.settings.backup.dirPlaceholder}
+              onChange={(e) => setBackupDirInput(e.target.value)}
+              className="flex-1 rounded-full border border-subtle bg-surface-muted px-4 py-2 text-xs text-primary placeholder:text-muted font-mono"
+            />
+            <button
+              type="button"
+              data-testid="settings-backup-dir-save"
+              onClick={() => {
+                void handleSaveBackupDir();
+              }}
+              className="rounded-full bg-accent-primary px-4 py-2 text-xs font-semibold text-accent-foreground"
+            >
+              {t.app.save}
+            </button>
+          </div>
+        </div>
+
+        {/* Actions de sauvegarde immédiate (BKP-1) et d'export JSON complet (BKP-3) */}
+        <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t border-subtle">
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              data-testid="settings-trigger-backup-btn"
+              onClick={() => {
+                void handleTriggerBackup();
+              }}
+              className="inline-flex items-center gap-2 rounded-full bg-accent-primary px-4 py-2 text-xs font-semibold text-accent-foreground"
+            >
+              <HardDriveDownload className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>{t.settings.backup.triggerBackupBtn}</span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="settings-export-json-btn"
+              onClick={() => {
+                void handleExportFullJson();
+              }}
+              className="inline-flex items-center gap-2 rounded-full border border-subtle bg-surface-muted px-4 py-2 text-xs font-semibold text-primary hover:bg-surface transition-colors"
+            >
+              <Download className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>{t.settings.backup.exportJsonBtn}</span>
+            </button>
+          </div>
+
+          <span
+            data-testid="settings-backups-count"
+            className="text-xs font-medium text-secondary"
+          >
+            {t.settings.backup.availableBackupsLabel} :{' '}
+            <strong className="text-primary">{backupFiles.length}</strong>
+          </span>
+        </div>
+
+        {backupStatusMessage && (
+          <p
+            role="status"
+            data-testid="settings-backup-status-msg"
+            className="text-xs font-semibold text-primary"
+          >
+            {backupStatusMessage}
+          </p>
+        )}
+
+        {backupFiles.length > 0 && (
+          <ul
+            data-testid="settings-backups-list"
+            className="divide-y divide-subtle rounded-2xl border border-subtle bg-surface-muted px-4 py-2 text-xs"
+          >
+            {backupFiles.map((file) => (
+              <li
+                key={file.filename}
+                className="flex items-center justify-between gap-2 py-1.5"
+              >
+                <span className="font-mono font-semibold text-primary">
+                  {file.filename}
+                </span>
+                <span className="text-secondary text-[11px] uppercase">
+                  {file.kind}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {exportedJsonPreview && (
+          <div
+            data-testid="settings-export-json-preview"
+            className="rounded-2xl border border-subtle bg-surface-muted p-4 flex flex-col gap-2"
+          >
+            <p className="text-xs font-semibold text-primary">
+              {t.settings.backup.exportJsonTitle}
+            </p>
+            <pre className="max-h-48 overflow-y-auto text-[11px] font-mono text-secondary whitespace-pre-wrap break-all">
+              {exportedJsonPreview}
+            </pre>
+          </div>
+        )}
+      </section>
+
       {/* État du socle SQLite local-first */}
       <section
         aria-labelledby="storage-heading"
@@ -326,7 +518,7 @@ export const SettingsPage: React.FC = () => {
               {t.settings.storage.schemaVersion}
             </dt>
             <dd className="font-semibold text-primary">
-              v{dbStatus?.schema_version ?? 2}
+              v{dbStatus?.schema_version ?? 4}
             </dd>
           </div>
           <div className="rounded-2xl bg-surface-muted p-4">

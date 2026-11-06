@@ -38,6 +38,7 @@
 - [x] Refonte de l'écran Tâches fidèle à `docs/ui-tasks-reference.png` en remplaçant le panneau d'import d'image hors périmètre par le panneau de rappel de syntaxe / modèles (`CMD-3`) et le panneau de détail / édition (`TSK-1` à `TSK-7`, `CAP-2`) (`feat/ui-design-system`)
 - [x] Test automatisé vérifiant l'absence totale d'appel réseau (`fetch`/`XMLHttpRequest`) et de CDN externe sur le build de production (`src/__tests__/prod-no-network.test.tsx`) (`PRV-1`, `PRV-2`) (`feat/ui-design-system`)
 - [x] Analyseur de saisie rapide complet (`CAP-2`, 61 tests unitaires `QLT-1`), capture globale `Ctrl+Maj+Espace` (`CAP-1`) avec repli CLI `--quick-capture`, support clavier AZERTY/Numpad (`e.code`), panneau droit repliable Option B persisté dans SQLite, troncature `line-clamp-1` avec dépliage et format de date `DD-MM-YYYY` par défaut (`feat/ui-design-system`)
+- [x] Moteur Focus 5 pur (`FOC-1` à `FOC-4`, 21 tests unitaires), pile d'annulation `CommandHistory` multi-niveaux (`TSK-5`, 9 tests unitaires) avec toast 5 s, sauvegarde SQLite automatique (`VACUUM INTO`) à la fermeture et au démarrage si > 24 h avec rotation 7 quotidiennes / 4 hebdomadaires (`BKP-1`, `BKP-2`) et export JSON complet (`BKP-3`) (`feat/ui-design-system`)
 
 ### Jalon J1 — Cœur des Tâches & Saisie Rapide (2 semaines)
 **Objectif de sortie :** Une tâche catégorisée se crée en moins de 5 secondes.
@@ -55,15 +56,15 @@
 **Objectif de sortie :** Une journée complète est utilisable et les données sont protégées.
 - [x] `FOC-1` **[Must]** : Sélectionner jusqu'à 5 tâches dans le Focus du jour (6e refusé avec message clair, ordre 1–5 modifiable, contrainte en base) (`feat/ui-design-system`)
 - [x] `FOC-2` **[Must]** : Cocher une tâche depuis le Focus la termine et met à jour immédiatement la progression (`3/5`) (`feat/ui-design-system`)
-- [ ] `FOC-3` **[Must]** : Gestion des tâches du Focus non terminées la veille (aucun report silencieux, proposées au briefing suivant)
+- [x] `FOC-3` **[Must]** : Gestion des tâches du Focus non terminées la veille (aucun report silencieux, proposées au briefing suivant) (`feat/ui-design-system`)
 - [x] `FOC-4` **[Should]** : Mode « Maintenant » (affichage en grand d'une seule tâche du Focus avec minuteur optionnel) (`feat/ui-design-system`)
 - [x] `TSK-5` **[Must]** : Annuler la dernière action avec `Ctrl+Z` / `Cmd+Z` (suppression, complétion, déplacement) (`feat/ui-design-system`)
 - [x] `DSH-1` **[Must]** : Vue d'ensemble du Dashboard (Focus 5 en zone principale gauche, agenda du jour et prochaines échéances à droite, raccourcis épinglés en bas) (`feat/ui-design-system`)
 - [x] `DSH-2` **[Should]** : Emplacement réservé au mail dans la mise en page, masqué par défaut (`feat/ui-design-system`)
 - [x] `DSH-3` **[Must]** : Disposition fixe (aucune personnalisation du layout dans le MVP) (`feat/ui-design-system`)
-- [ ] `BKP-1` **[Must]** : Sauvegarde automatique cohérente via l'API de backup SQLite à la fermeture et au moins 1 fois/jour
-- [ ] `BKP-2` **[Must]** : Rotation conservant 7 sauvegardes quotidiennes et 4 hebdomadaires dans un dossier réglable
-- [ ] `BKP-3` **[Must]** : Export complet des données dans un fichier JSON lisible et importable
+- [x] `BKP-1` **[Must]** : Sauvegarde automatique cohérente via l'API de backup SQLite à la fermeture et au moins 1 fois/jour (`feat/ui-design-system`)
+- [x] `BKP-2` **[Must]** : Rotation conservant 7 sauvegardes quotidiennes et 4 hebdomadaires dans un dossier réglable (`feat/ui-design-system`)
+- [x] `BKP-3` **[Must]** : Export complet des données dans un fichier JSON lisible et importable (`feat/ui-design-system`)
 
 ### Jalon J3 — Agenda en Lecture Seule (2 semaines)
 **Objectif de sortie :** L'emploi du temps s'affiche à l'identique de la source ICS.

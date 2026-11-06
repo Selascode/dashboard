@@ -3,8 +3,11 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 import App from '../App';
 import {
+  TaskRecord,
+  addFocusItem,
   createTask,
   getSettingValue,
+  listFocusItems,
   resetMemoryFallbackStore,
   seedDemoData,
 } from '../lib/db';
@@ -379,5 +382,110 @@ describe('Coque, Navigation Clavier, Palette cmdk & Thèmes (Lots A & B)', () =>
     expect(screen.getByTestId('quick-preview-due-badge')).toHaveTextContent(
       '@11-15-2026',
     );
+  });
+
+  it('valide les nouveautés J2 : refus de la 6e tâche Focus sur Dashboard/Tâches, bannière FOC-3, Mode Maintenant (FOC-4), réordonnancement annulable Ctrl+Z (TSK-5) et section Sauvegardes / Export JSON (BKP-1..3)', async () => {
+    const yesterday = '2026-11-01';
+    const today = '2026-11-02';
+
+    const pastTask = await createTask({
+      title: 'Tâche non terminée de la veille',
+      priority: 3,
+      due_date: yesterday,
+    });
+    await addFocusItem(yesterday, pastTask.id);
+
+    const todayTasks: TaskRecord[] = [];
+    for (let i = 1; i <= 6; i += 1) {
+      const tk = await createTask({
+        title: `Priorité Jour ${i}`,
+        priority: 3,
+        due_date: today,
+        estimated_minutes: 40,
+      });
+      todayTasks.push(tk);
+      if (i <= 5) {
+        await addFocusItem(today, tk.id);
+      }
+    }
+
+    render(<App />);
+
+    // 1. Bannière de rétention FOC-3 présente sur le Dashboard
+    expect(
+      await screen.findByTestId('unfinished-yesterday-focus-banner'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId(`unfinished-past-focus-item-${pastTask.id}`),
+    ).toHaveTextContent('Tâche non terminée de la veille');
+
+    // 2. Tentative de reprendre la tâche de la veille alors que 5 tâches sont déjà au Focus -> refus FOC-1
+    fireEvent.click(screen.getByTestId(`resume-past-focus-btn-${pastTask.id}`));
+    expect(
+      await screen.findByTestId('dashboard-focus-limit-alert'),
+    ).toHaveTextContent(/5 priorités maximum/i);
+
+    // 3. Réordonnancement dans Focus 5 + annulation via Ctrl+Z (CommandHistory)
+    const moveDownBtn = screen.getByTestId(
+      `focus-move-down-${todayTasks[0].id}`,
+    );
+    fireEvent.click(moveDownBtn);
+    await waitFor(async () => {
+      const items = await listFocusItems(today);
+      expect(items[0].task_id).toBe(todayTasks[1].id);
+    });
+    expect(await screen.findByTestId('undo-toast')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'z', ctrlKey: true });
+    await waitFor(async () => {
+      const items = await listFocusItems(today);
+      expect(items[0].task_id).toBe(todayTasks[0].id);
+    });
+
+    // 4. Mode Maintenant (FOC-4) initialisé sur la durée estimée (40:00) et bouton Terminer la tâche
+    fireEvent.click(screen.getByTestId('focus-now-mode-trigger'));
+    expect(await screen.findByTestId('focus-now-mode')).toBeInTheDocument();
+    expect(screen.getByTestId('now-mode-timer-display')).toHaveTextContent(
+      '40:00',
+    );
+    fireEvent.click(screen.getByTestId('now-mode-complete-btn'));
+    await waitFor(() => {
+      expect(screen.queryByTestId('focus-now-mode')).not.toBeInTheDocument();
+    });
+    expect(screen.getByTestId('focus5-progress')).toHaveTextContent('1/5');
+
+    // 5. Refus de la 6e tâche Focus depuis la page Tâches
+    fireEvent.click(screen.getByTestId('nav-tasks'));
+    expect(await screen.findByTestId('page-tasks')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId(`task-select-${todayTasks[5].id}`));
+    fireEvent.click(await screen.findByTestId('detail-toggle-focus-btn'));
+    expect(await screen.findByTestId('focus-limit-alert')).toHaveTextContent(
+      /5 priorités maximum/i,
+    );
+
+    // 6. Section Sauvegardes & Export JSON dans Paramètres (BKP-1, BKP-2, BKP-3)
+    fireEvent.click(screen.getByTestId('nav-settings'));
+    expect(
+      await screen.findByTestId('settings-backup-section'),
+    ).toBeInTheDocument();
+
+    const dirInput = screen.getByTestId('settings-backup-dir-input');
+    fireEvent.change(dirInput, { target: { value: '/tmp/mes-backups-focus' } });
+    fireEvent.click(screen.getByTestId('settings-backup-dir-save'));
+    await waitFor(async () => {
+      expect(await getSettingValue('backup_dir', '')).toBe(
+        '/tmp/mes-backups-focus',
+      );
+    });
+
+    fireEvent.click(screen.getByTestId('settings-trigger-backup-btn'));
+    expect(
+      await screen.findByTestId('settings-backups-list'),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('settings-export-json-btn'));
+    const exportPreview = await screen.findByTestId(
+      'settings-export-json-preview',
+    );
+    expect(exportPreview).toHaveTextContent('productivity-dashboard-backup-v1');
   });
 });

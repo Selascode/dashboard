@@ -1,27 +1,34 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  EXPORT_FORMAT_V1,
   addFocusItem,
   completeTask,
   createCategory,
   createTask,
   deleteCategory,
   deleteTask,
+  exportFullJson,
+  getAppSettings,
   getCategories,
   getDbStatus,
   getSetting,
   getSettingValue,
   getSettings,
   get_setting,
+  listBackups,
   listFocusItems,
   listTasks,
+  listUncompletedPastFocusItems,
   removeFocusItem,
   reorderFocusItems,
   resetMemoryFallbackStore,
   restoreTask,
   seedDemoData,
+  setBackupDir,
   setSetting,
   setSettingValue,
   set_setting,
+  triggerBackup,
   updateCategory,
   updateTask,
 } from '../db';
@@ -196,9 +203,9 @@ describe('Couche d’accès aux données unique (src/lib/db.ts)', () => {
     expect(await listFocusItems('2026-11-02')).toHaveLength(2);
   });
 
-  it('vérifie le statut de santé de la base en version 3 et les 5 entités synchronisables [Section 6]', async () => {
+  it('vérifie le statut de santé de la base en version 4 et les 5 entités synchronisables [Section 6]', async () => {
     const status = await getDbStatus();
-    expect(status.schema_version).toBe(3);
+    expect(status.schema_version).toBe(4);
     expect(status.tables_verified).toHaveLength(8);
     expect(status.sync_entities_verified).toEqual([
       'categories',
@@ -207,5 +214,55 @@ describe('Couche d’accès aux données unique (src/lib/db.ts)', () => {
       'launcher_items',
       'commands',
     ]);
+  });
+
+  it('liste les éléments Focus non terminés des jours précédents sans les reporter en silence [FOC-3]', async () => {
+    const yesterday = '2026-11-01';
+    const today = '2026-11-02';
+
+    const t1 = await createTask({ title: 'Tâche veille non finie', priority: 3 });
+    const t2 = await createTask({ title: 'Tâche veille terminée', priority: 2 });
+
+    await addFocusItem(yesterday, t1.id);
+    await addFocusItem(yesterday, t2.id);
+    await completeTask(t2.id, true);
+
+    expect(await listFocusItems(today)).toHaveLength(0);
+
+    const uncompletedPast = await listUncompletedPastFocusItems(today);
+    expect(uncompletedPast).toHaveLength(1);
+    expect(uncompletedPast[0].task_id).toBe(t1.id);
+    expect(uncompletedPast[0].focus_day).toBe(yesterday);
+  });
+
+  it('gère les réglages de sauvegarde, triggerBackup, listBackups et exportFullJson en schema_version 4 [BKP-1, BKP-2, BKP-3]', async () => {
+    const appSettings = await getAppSettings();
+    expect(appSettings.backup_dir).toBe('');
+    expect(appSettings.last_auto_backup_date).toBeNull();
+
+    const updatedDir = await setBackupDir('/tmp/focus-backups');
+    expect(updatedDir).toBe('/tmp/focus-backups');
+    expect(await getSetting('backup_dir')).toBe('/tmp/focus-backups');
+
+    const report = await triggerBackup(true);
+    expect(report.performed).toBe(true);
+    expect(report.backup_dir).toBe('/tmp/focus-backups');
+    expect(report.daily_backup_path).toContain('daily-');
+    expect(report.weekly_backup_path).toContain('weekly-');
+
+    const backups = await listBackups();
+    expect(backups.length).toBeGreaterThanOrEqual(2);
+    expect(backups.some((b) => b.kind === 'daily')).toBe(true);
+    expect(backups.some((b) => b.kind === 'weekly')).toBe(true);
+
+    await createTask({ title: 'Tâche à exporter en JSON', priority: 2 });
+    const jsonRaw = await exportFullJson();
+    const parsed = JSON.parse(jsonRaw);
+    expect(parsed.format).toBe(EXPORT_FORMAT_V1);
+    expect(parsed.schema_version).toBe(4);
+    expect(parsed.categories).toHaveLength(5);
+    expect(parsed.tasks).toHaveLength(1);
+    expect(Array.isArray(parsed.focus_items)).toBe(true);
+    expect(Array.isArray(parsed.settings)).toBe(true);
   });
 });
