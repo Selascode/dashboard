@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Clock,
   Lock,
+  MapPin,
   Maximize2,
   Pin,
   Play,
@@ -22,12 +23,19 @@ import { UndoAction } from '../App';
 import { useTheme } from '../context/ThemeContext';
 import { formatTranslation, useTranslations } from '../i18n';
 import {
+  AgendaTimelineItem,
+  getAgendaForDay,
+  getDaysWithAgendaItems,
+} from '../lib/calendar-engine';
+import {
+  CalendarEventRecord,
   CategoryRecord,
   FocusItemRecord,
   TaskRecord,
   addFocusItem,
   completeTask,
   getCategories,
+  listCalendarEvents,
   listFocusItems,
   listTasks,
   listUncompletedPastFocusItems,
@@ -61,6 +69,98 @@ interface DashboardPageProps {
 
 const REFERENCE_TODAY = '2026-11-02';
 const LONG_TEXT_THRESHOLD = 48;
+const POPOVER_HOVER_DELAY_MS = 150;
+
+interface MiniGridDayCell {
+  dayKey: string;
+  dayNumber: number;
+  inCurrentMonth: boolean;
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function buildYmd(year: number, month: number, day: number): string {
+  return `${String(year).padStart(4, '0')}-${pad2(month)}-${pad2(day)}`;
+}
+
+function parseYmd(dayKey: string): { year: number; month: number; day: number } {
+  const [y, m, d] = dayKey.split('-').map(Number);
+  return {
+    year: y || 2026,
+    month: m || 11,
+    day: d || 2,
+  };
+}
+
+function addDaysYmd(dayKey: string, delta: number): string {
+  const { year, month, day } = parseYmd(dayKey);
+  const dt = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+  dt.setUTCDate(dt.getUTCDate() + delta);
+  return buildYmd(dt.getUTCFullYear(), dt.getUTCMonth() + 1, dt.getUTCDate());
+}
+
+function buildMiniCalendarGridDays(
+  anchorDayKey: string,
+  viewMode: 'week' | 'month',
+): MiniGridDayCell[] {
+  const { year, month, day } = parseYmd(anchorDayKey);
+
+  if (viewMode === 'week') {
+    const dt = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
+    const dowMondayZero = (dt.getUTCDay() + 6) % 7;
+    const mondayKey = addDaysYmd(anchorDayKey, -dowMondayZero);
+    const cells: MiniGridDayCell[] = [];
+    for (let i = 0; i < 7; i += 1) {
+      const k = addDaysYmd(mondayKey, i);
+      const parsed = parseYmd(k);
+      cells.push({
+        dayKey: k,
+        dayNumber: parsed.day,
+        inCurrentMonth: parsed.month === month,
+      });
+    }
+    return cells;
+  }
+
+  const firstDayKey = buildYmd(year, month, 1);
+  const firstDateUtc = new Date(Date.UTC(year, month - 1, 1, 12, 0, 0));
+  const firstDowMondayZero = (firstDateUtc.getUTCDay() + 6) % 7;
+  const startGridKey = addDaysYmd(firstDayKey, -firstDowMondayZero);
+
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const totalNeeded = firstDowMondayZero + daysInMonth;
+  const cellCount = totalNeeded > 35 ? 42 : 35;
+
+  const cells: MiniGridDayCell[] = [];
+  for (let i = 0; i < cellCount; i += 1) {
+    const k = addDaysYmd(startGridKey, i);
+    const parsed = parseYmd(k);
+    cells.push({
+      dayKey: k,
+      dayNumber: parsed.day,
+      inCurrentMonth: parsed.month === month && parsed.year === year,
+    });
+  }
+  return cells;
+}
+
+function formatAgendaItemTimeRange(
+  item: AgendaTimelineItem,
+  allDayLabel: string,
+): string {
+  if (item.is_all_day) {
+    return allDayLabel;
+  }
+  if (item.kind === 'ics_event') {
+    if (item.start_time_label && item.end_time_label) {
+      return `${item.start_time_label} – ${item.end_time_label}`;
+    }
+    return item.start_time_label ?? allDayLabel;
+  }
+  return item.time_label ?? allDayLabel;
+}
 
 export const DashboardPage: React.FC<DashboardPageProps> = ({
   onComposeFocus,
@@ -76,16 +176,38 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [categories, setCategories] = useState<CategoryRecord[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEventRecord[]>(
+    [],
+  );
   const [focusItems, setFocusItems] = useState<FocusItemRecord[]>([]);
   const [pastFocusItems, setPastFocusItems] = useState<FocusItemRecord[]>([]);
   const [focusLimitAlert, setFocusLimitAlert] = useState<string | null>(null);
   const [deadlinesFilter, setDeadlinesFilter] = useState<'upcoming' | 'overdue'>(
     'upcoming',
   );
+  const [agendaViewMode, setAgendaViewMode] = useState<'week' | 'month'>('week');
+  const [selectedAgendaDay, setSelectedAgendaDay] =
+    useState<string>(REFERENCE_TODAY);
+  const [popoverDayKey, setPopoverDayKey] = useState<string | null>(null);
+  const hoverTimerRef = useRef<number | null>(null);
+  const dayButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const [nowSession, setNowSession] = useState<NowModeSessionState | null>(null);
   const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(
     () => new Set(),
   );
+
+  const clearHoverTimer = useCallback(() => {
+    if (hoverTimerRef.current !== null) {
+      window.clearTimeout(hoverTimerRef.current);
+      hoverTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearHoverTimer();
+    };
+  }, [clearHoverTimer]);
 
   const toggleTaskExpand = useCallback((taskId: string) => {
     setExpandedTaskIds((prev) => {
@@ -100,17 +222,24 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
   }, []);
 
   const loadDashboardData = useCallback(async () => {
-    const [loadedTasks, loadedCategories, loadedFocus, loadedPastFocus] =
-      await Promise.all([
-        listTasks(),
-        getCategories(),
-        listFocusItems(REFERENCE_TODAY),
-        listUncompletedPastFocusItems(REFERENCE_TODAY),
-      ]);
+    const [
+      loadedTasks,
+      loadedCategories,
+      loadedFocus,
+      loadedPastFocus,
+      loadedEvents,
+    ] = await Promise.all([
+      listTasks(),
+      getCategories(),
+      listFocusItems(REFERENCE_TODAY),
+      listUncompletedPastFocusItems(REFERENCE_TODAY),
+      listCalendarEvents(),
+    ]);
     setTasks(loadedTasks);
     setCategories(loadedCategories);
     setFocusItems(loadedFocus);
     setPastFocusItems(loadedPastFocus);
+    setCalendarEvents(loadedEvents);
   }, []);
 
   useEffect(() => {
@@ -177,6 +306,110 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
 
   const displayedDeadlines =
     deadlinesFilter === 'overdue' ? overdueTasks : upcomingTasks;
+
+  const miniGridDays = useMemo(
+    () => buildMiniCalendarGridDays(selectedAgendaDay, agendaViewMode),
+    [selectedAgendaDay, agendaViewMode],
+  );
+
+  const miniGridStartKey = miniGridDays[0]?.dayKey ?? selectedAgendaDay;
+  const miniGridEndKey =
+    miniGridDays[miniGridDays.length - 1]?.dayKey ?? selectedAgendaDay;
+
+  const agendaDaysMap = useMemo(
+    () =>
+      getDaysWithAgendaItems(
+        calendarEvents,
+        tasks,
+        miniGridStartKey,
+        miniGridEndKey,
+      ),
+    [calendarEvents, tasks, miniGridStartKey, miniGridEndKey],
+  );
+
+  const selectedDaySummary = useMemo(
+    () => getAgendaForDay(calendarEvents, tasks, selectedAgendaDay),
+    [calendarEvents, tasks, selectedAgendaDay],
+  );
+
+  const popoverDaySummary = useMemo(
+    () =>
+      popoverDayKey
+        ? getAgendaForDay(calendarEvents, tasks, popoverDayKey)
+        : null,
+    [calendarEvents, tasks, popoverDayKey],
+  );
+
+  const handleDayMouseEnter = useCallback(
+    (dayKey: string, hasItems: boolean) => {
+      clearHoverTimer();
+      if (!hasItems) {
+        setPopoverDayKey(null);
+        return;
+      }
+      hoverTimerRef.current = window.setTimeout(() => {
+        setPopoverDayKey(dayKey);
+      }, POPOVER_HOVER_DELAY_MS);
+    },
+    [clearHoverTimer],
+  );
+
+  const handleDayMouseLeave = useCallback(() => {
+    clearHoverTimer();
+    setPopoverDayKey(null);
+  }, [clearHoverTimer]);
+
+  const handleDayFocus = useCallback(
+    (dayKey: string, hasItems: boolean) => {
+      clearHoverTimer();
+      if (hasItems) {
+        setPopoverDayKey(dayKey);
+      } else {
+        setPopoverDayKey(null);
+      }
+    },
+    [clearHoverTimer],
+  );
+
+  const handleDayBlur = useCallback(() => {
+    clearHoverTimer();
+    setPopoverDayKey(null);
+  }, [clearHoverTimer]);
+
+  const handleDayKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLButtonElement>, dayKey: string) => {
+      if (e.key === 'Escape') {
+        if (popoverDayKey !== null) {
+          e.stopPropagation();
+          setPopoverDayKey(null);
+        }
+        return;
+      }
+
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        setSelectedAgendaDay(dayKey);
+        return;
+      }
+
+      let delta = 0;
+      if (e.key === 'ArrowRight') delta = 1;
+      else if (e.key === 'ArrowLeft') delta = -1;
+      else if (e.key === 'ArrowDown') delta = 7;
+      else if (e.key === 'ArrowUp') delta = -7;
+
+      if (delta !== 0) {
+        e.preventDefault();
+        const nextKey = addDaysYmd(dayKey, delta);
+        setSelectedAgendaDay(nextKey);
+        window.requestAnimationFrame(() => {
+          const btn = dayButtonRefs.current.get(nextKey);
+          btn?.focus();
+        });
+      }
+    },
+    [popoverDayKey],
+  );
 
   const handleToggleFocusTaskComplete = async (task: TaskRecord) => {
     const nextCompleted = task.status !== 'done';
@@ -781,10 +1014,10 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
           <section
             aria-labelledby="agenda-today-heading"
             data-testid="zone-today-agenda"
-            className="focus-card-surface flex-1 flex flex-col justify-between rounded-3xl p-6"
+            className="focus-card-surface flex-1 flex flex-col justify-between rounded-3xl p-6 relative"
           >
             <div>
-              <div className="flex items-center justify-between gap-2 mb-5">
+              <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
                 <div className="flex items-center gap-2.5">
                   <Calendar
                     className="h-4 w-4 text-primary"
@@ -803,18 +1036,240 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                 </span>
               </div>
 
-              <div className="flex items-start gap-3.5 my-2">
-                <span className="inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-subtle bg-surface-muted text-secondary">
-                  <Calendar className="h-5 w-5" aria-hidden="true" />
+              {/* Bascule de vue Mois / Semaine */}
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <span className="text-xs font-semibold text-secondary">
+                  {formatDateByPreference(selectedAgendaDay, dateFormat)}
                 </span>
-                <div>
-                  <p className="text-xs font-semibold text-primary mb-1">
-                    {t.dashboard.agendaZone.emptyTitle}
-                  </p>
-                  <p className="text-xs text-secondary leading-relaxed">
-                    {t.dashboard.agendaZone.empty}
-                  </p>
+                <div className="inline-flex rounded-full border border-subtle bg-surface-muted p-0.5">
+                  <button
+                    type="button"
+                    data-testid="dashboard-agenda-view-month"
+                    aria-pressed={agendaViewMode === 'month'}
+                    onClick={() => setAgendaViewMode('month')}
+                    className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${
+                      agendaViewMode === 'month'
+                        ? 'bg-accent-primary text-accent-foreground'
+                        : 'text-secondary hover:text-primary'
+                    }`}
+                  >
+                    {t.dashboard.agendaZone.viewMonth}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="dashboard-agenda-view-week"
+                    aria-pressed={agendaViewMode === 'week'}
+                    onClick={() => setAgendaViewMode('week')}
+                    className={`rounded-full px-3 py-1 text-[11px] font-semibold transition-colors ${
+                      agendaViewMode === 'week'
+                        ? 'bg-accent-primary text-accent-foreground'
+                        : 'text-secondary hover:text-primary'
+                    }`}
+                  >
+                    {t.dashboard.agendaZone.viewWeek}
+                  </button>
                 </div>
+              </div>
+
+              {/* Mini-grille mensuelle / hebdomadaire & Infobulle At-a-Glance */}
+              <div className="relative mb-4">
+                <div className="grid grid-cols-7 gap-1 text-center mb-1">
+                  {t.dashboard.agendaZone.weekdaysShort.map((dayInitial, idx) => (
+                    <span
+                      key={idx}
+                      className="text-[10px] font-semibold uppercase text-muted py-0.5"
+                    >
+                      {dayInitial}
+                    </span>
+                  ))}
+                </div>
+
+                <div
+                  role="grid"
+                  aria-label={t.dashboard.agendaZone.title}
+                  className="grid grid-cols-7 gap-1"
+                >
+                  {miniGridDays.map((cell) => {
+                    const dayInfo = agendaDaysMap.get(cell.dayKey);
+                    const hasItems = Boolean(dayInfo && dayInfo.items.length > 0);
+                    const isSelected = cell.dayKey === selectedAgendaDay;
+                    const isToday = cell.dayKey === REFERENCE_TODAY;
+
+                    return (
+                      <button
+                        key={cell.dayKey}
+                        ref={(el) => {
+                          if (el) {
+                            dayButtonRefs.current.set(cell.dayKey, el);
+                          } else {
+                            dayButtonRefs.current.delete(cell.dayKey);
+                          }
+                        }}
+                        type="button"
+                        data-testid={`dashboard-agenda-day-${cell.dayKey}`}
+                        aria-pressed={isSelected}
+                        aria-current={isToday ? 'date' : undefined}
+                        onClick={() => setSelectedAgendaDay(cell.dayKey)}
+                        onMouseEnter={() =>
+                          handleDayMouseEnter(cell.dayKey, hasItems)
+                        }
+                        onMouseLeave={handleDayMouseLeave}
+                        onFocus={() => handleDayFocus(cell.dayKey, hasItems)}
+                        onBlur={handleDayBlur}
+                        onKeyDown={(e) => handleDayKeyDown(e, cell.dayKey)}
+                        className={`relative flex flex-col items-center justify-center rounded-xl py-1.5 text-xs font-semibold transition-colors ${
+                          isSelected
+                            ? 'bg-accent-primary text-accent-foreground'
+                            : isToday
+                              ? 'border border-accent-primary bg-surface-muted text-primary'
+                              : cell.inCurrentMonth
+                                ? 'text-primary hover:bg-surface-muted'
+                                : 'text-muted hover:bg-surface-muted'
+                        }`}
+                      >
+                        <span>{cell.dayNumber}</span>
+                        {hasItems && (
+                          <span
+                            data-testid={`dashboard-agenda-dot-${cell.dayKey}`}
+                            aria-hidden="true"
+                            className={`mt-0.5 h-1.5 w-1.5 rounded-full ${
+                              isSelected
+                                ? 'bg-accent-foreground'
+                                : 'bg-accent-primary'
+                            }`}
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Infobulle dynamique At-a-Glance (Popover) */}
+                {popoverDaySummary && popoverDaySummary.items.length > 0 && (
+                  <div
+                    role="tooltip"
+                    data-testid="dashboard-agenda-popover"
+                    className="z-30 mt-2 rounded-2xl border border-subtle bg-surface p-3.5 shadow-md"
+                  >
+                    <p className="text-[11px] font-bold text-primary mb-2">
+                      {formatTranslation(t.dashboard.agendaZone.popoverHeading, {
+                        date: formatDateByPreference(
+                          popoverDaySummary.dayKey,
+                          dateFormat,
+                        ),
+                      })}
+                    </p>
+                    <ul className="space-y-2">
+                      {popoverDaySummary.items.map((item) => {
+                        const subtitleInfo =
+                          item.kind === 'ics_event'
+                            ? item.location || item.notes
+                            : item.notes;
+                        return (
+                          <li
+                            key={item.occurrence_id}
+                            className="flex flex-col gap-0.5 text-xs border-l-2 border-accent-primary pl-2.5"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="font-mono text-[11px] font-semibold text-secondary">
+                                {formatAgendaItemTimeRange(
+                                  item,
+                                  t.dashboard.agendaZone.allDay,
+                                )}
+                              </span>
+                              <span className="text-[10px] font-semibold text-secondary">
+                                {item.kind === 'ics_event'
+                                  ? t.dashboard.agendaZone.readonlyBadge
+                                  : t.dashboard.agendaZone.deadlineBadge}
+                              </span>
+                            </div>
+                            <span className="font-semibold text-primary">
+                              {item.title}
+                            </span>
+                            {subtitleInfo && (
+                              <span className="text-[11px] text-secondary line-clamp-1">
+                                {subtitleInfo}
+                              </span>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                )}
+              </div>
+
+              {/* Encart inférieur dynamique réagissant à la date sélectionnée */}
+              <div
+                data-testid="dashboard-agenda-day-summary"
+                className="rounded-2xl border border-subtle bg-surface-muted p-3.5"
+              >
+                {selectedDaySummary.items.length === 0 ? (
+                  <div className="flex items-start gap-3">
+                    <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-subtle bg-surface text-secondary">
+                      <Calendar className="h-4 w-4" aria-hidden="true" />
+                    </span>
+                    <div>
+                      <p className="text-xs font-semibold text-primary mb-0.5">
+                        {t.dashboard.agendaZone.emptyTitle}
+                      </p>
+                      <p className="text-xs text-secondary leading-relaxed">
+                        {t.dashboard.agendaZone.empty}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <p className="text-[11px] font-semibold text-secondary">
+                      {formatTranslation(
+                        t.dashboard.agendaZone.daySummaryHeading,
+                        {
+                          date: formatDateByPreference(
+                            selectedAgendaDay,
+                            dateFormat,
+                          ),
+                        },
+                      )}
+                    </p>
+                    <ul className="divide-y divide-subtle">
+                      {selectedDaySummary.items.map((item) => (
+                        <li
+                          key={item.occurrence_id}
+                          data-testid={`dashboard-agenda-summary-item-${item.occurrence_id}`}
+                          className="flex items-center justify-between gap-2 py-2 text-xs"
+                        >
+                          <div className="flex flex-col min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className="font-mono text-[11px] font-semibold text-secondary shrink-0">
+                                {formatAgendaItemTimeRange(
+                                  item,
+                                  t.dashboard.agendaZone.allDay,
+                                )}
+                              </span>
+                              <span className="font-semibold text-primary truncate">
+                                {item.title}
+                              </span>
+                            </div>
+                            {item.kind === 'ics_event' && item.location && (
+                              <span className="inline-flex items-center gap-1 text-[11px] text-secondary truncate mt-0.5">
+                                <MapPin
+                                  className="h-3 w-3 shrink-0"
+                                  aria-hidden="true"
+                                />
+                                <span className="truncate">{item.location}</span>
+                              </span>
+                            )}
+                          </div>
+                          <span className="shrink-0 rounded-full border border-subtle bg-surface px-2 py-0.5 text-[10px] font-semibold text-secondary">
+                            {item.kind === 'ics_event'
+                              ? t.dashboard.agendaZone.readonlyBadge
+                              : t.dashboard.agendaZone.deadlineBadge}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             </div>
 

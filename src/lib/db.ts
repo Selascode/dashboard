@@ -111,6 +111,64 @@ export interface FocusItemRecord extends SyncMetadata {
   outcome: FocusOutcome;
 }
 
+export type CalendarSourceType = 'file' | 'url';
+
+export interface CalendarSourceRecord {
+  id: string;
+  name: string;
+  source_type: CalendarSourceType;
+  location_or_keychain_ref: string;
+  refresh_interval_minutes: number;
+  last_synced_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateCalendarSourceInput {
+  name: string;
+  source_type: CalendarSourceType;
+  location?: string;
+  refresh_interval_minutes?: number;
+  raw_ics_content?: string;
+}
+
+export interface UpdateCalendarSourceInput {
+  id: string;
+  name?: string;
+  location?: string;
+  refresh_interval_minutes?: number;
+  raw_ics_content?: string;
+}
+
+export interface CalendarEventRecord {
+  id: string;
+  source_id: string;
+  ics_uid: string;
+  title: string;
+  start_at: string;
+  end_at: string;
+  is_all_day: boolean;
+  location: string;
+  notes: string;
+  rrule: string | null;
+  exdates_json: string;
+}
+
+export interface CalendarEventInput {
+  id?: string;
+  ics_uid: string;
+  title: string;
+  start_at: string;
+  end_at: string;
+  is_all_day?: boolean;
+  location?: string;
+  notes?: string;
+  rrule?: string | null;
+  exdates_json?: string;
+  exdates?: string[];
+}
+
 export interface PurgeReport {
   focus_items_purged: number;
   tasks_purged: number;
@@ -152,8 +210,8 @@ export interface FullDatabaseExport {
   categories: CategoryRecord[];
   tasks: TaskRecord[];
   focus_items: FocusItemRecord[];
-  calendar_sources: unknown[];
-  calendar_events: unknown[];
+  calendar_sources: CalendarSourceRecord[];
+  calendar_events: CalendarEventRecord[];
   launcher_items: unknown[];
   commands: unknown[];
   settings: SettingRecord[];
@@ -188,6 +246,8 @@ export type AppSettings = DefaultSettingsMap;
 export type UpdateSettingsInput = Partial<DefaultSettingsMap>;
 
 const BROWSER_STORAGE_KEY = 'focus_browser_db_v2';
+export const BROWSER_KEYCHAIN_KEY = 'focus_browser_keychain_v1';
+export const KEYCHAIN_ICS_URL_PREFIX = 'keychain:ics_url:';
 
 const DEFAULT_SETTINGS: DefaultSettingsMap = {
   theme: 'system',
@@ -273,6 +333,9 @@ interface BrowserDbSnapshot {
   categories: CategoryRecord[];
   tasks: TaskRecord[];
   focusItems: FocusItemRecord[];
+  calendarSources?: CalendarSourceRecord[];
+  calendarEvents?: CalendarEventRecord[];
+  icsFiles?: Record<string, string>;
   backups?: BackupFileInfo[];
 }
 
@@ -280,6 +343,10 @@ let memorySettingsStore: Map<string, SettingRecord> = new Map();
 let memoryCategoriesStore: Map<string, CategoryRecord> = new Map();
 let memoryTasksStore: Map<string, TaskRecord> = new Map();
 let memoryFocusStore: Map<string, FocusItemRecord> = new Map();
+let memoryCalendarSourcesStore: Map<string, CalendarSourceRecord> = new Map();
+let memoryCalendarEventsStore: Map<string, CalendarEventRecord> = new Map();
+let memoryIcsFilesStore: Map<string, string> = new Map();
+let memoryKeychainStore: Map<string, string> = new Map();
 let memoryBackupsStore: BackupFileInfo[] = [];
 let memoryCounter = 1;
 
@@ -309,6 +376,41 @@ function createInitialCategoriesMap(): Map<string, CategoryRecord> {
   return map;
 }
 
+function saveBrowserKeychainToStorage(): void {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+  try {
+    const obj = Object.fromEntries(memoryKeychainStore.entries());
+    window.localStorage.setItem(BROWSER_KEYCHAIN_KEY, JSON.stringify(obj));
+  } catch {
+    // Ignorer en environnement restreint
+  }
+}
+
+function loadBrowserKeychainFromStorage(): void {
+  memoryKeychainStore = new Map();
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return;
+  }
+  try {
+    const raw = window.localStorage.getItem(BROWSER_KEYCHAIN_KEY);
+    if (!raw) {
+      return;
+    }
+    const parsed = JSON.parse(raw) as Record<string, string>;
+    if (parsed && typeof parsed === 'object') {
+      for (const [k, v] of Object.entries(parsed)) {
+        if (typeof v === 'string') {
+          memoryKeychainStore.set(k, v);
+        }
+      }
+    }
+  } catch {
+    // Ignorer en environnement restreint
+  }
+}
+
 function saveBrowserStoreToLocalStorage(): void {
   if (typeof window === 'undefined' || !window.localStorage) {
     return;
@@ -319,6 +421,9 @@ function saveBrowserStoreToLocalStorage(): void {
       categories: Array.from(memoryCategoriesStore.values()),
       tasks: Array.from(memoryTasksStore.values()),
       focusItems: Array.from(memoryFocusStore.values()),
+      calendarSources: Array.from(memoryCalendarSourcesStore.values()),
+      calendarEvents: Array.from(memoryCalendarEventsStore.values()),
+      icsFiles: Object.fromEntries(memoryIcsFilesStore.entries()),
       backups: [...memoryBackupsStore],
     };
     window.localStorage.setItem(BROWSER_STORAGE_KEY, JSON.stringify(snapshot));
@@ -332,6 +437,7 @@ function loadBrowserStoreFromLocalStorage(): boolean {
     return false;
   }
   try {
+    loadBrowserKeychainFromStorage();
     const raw = window.localStorage.getItem(BROWSER_STORAGE_KEY);
     if (!raw) {
       return false;
@@ -360,6 +466,26 @@ function loadBrowserStoreFromLocalStorage(): boolean {
     if (Array.isArray(parsed.focusItems)) {
       for (const f of parsed.focusItems) {
         memoryFocusStore.set(f.id, f);
+      }
+    }
+    memoryCalendarSourcesStore = new Map();
+    if (Array.isArray(parsed.calendarSources)) {
+      for (const s of parsed.calendarSources) {
+        memoryCalendarSourcesStore.set(s.id, s);
+      }
+    }
+    memoryCalendarEventsStore = new Map();
+    if (Array.isArray(parsed.calendarEvents)) {
+      for (const e of parsed.calendarEvents) {
+        memoryCalendarEventsStore.set(e.id, e);
+      }
+    }
+    memoryIcsFilesStore = new Map();
+    if (parsed.icsFiles && typeof parsed.icsFiles === 'object') {
+      for (const [k, v] of Object.entries(parsed.icsFiles)) {
+        if (typeof v === 'string') {
+          memoryIcsFilesStore.set(k, v);
+        }
       }
     }
     memoryBackupsStore = Array.isArray(parsed.backups) ? parsed.backups : [];
@@ -592,6 +718,10 @@ function initializeMemoryStores(): void {
     memoryCategoriesStore = createInitialCategoriesMap();
     memoryTasksStore = new Map();
     memoryFocusStore = new Map();
+    memoryCalendarSourcesStore = new Map();
+    memoryCalendarEventsStore = new Map();
+    memoryIcsFilesStore = new Map();
+    memoryKeychainStore = new Map();
     applyDemoSeedSync(forceEmptyTasks);
     return;
   }
@@ -601,6 +731,10 @@ function initializeMemoryStores(): void {
     memoryCategoriesStore = createInitialCategoriesMap();
     memoryTasksStore = new Map();
     memoryFocusStore = new Map();
+    memoryCalendarSourcesStore = new Map();
+    memoryCalendarEventsStore = new Map();
+    memoryIcsFilesStore = new Map();
+    memoryKeychainStore = new Map();
   }
 }
 
@@ -617,6 +751,7 @@ export function resetMemoryFallbackStore(): void {
   if (typeof window !== 'undefined' && window.localStorage) {
     try {
       window.localStorage.removeItem(BROWSER_STORAGE_KEY);
+      window.localStorage.removeItem(BROWSER_KEYCHAIN_KEY);
     } catch {
       // ignore
     }
@@ -625,6 +760,10 @@ export function resetMemoryFallbackStore(): void {
   memoryCategoriesStore = createInitialCategoriesMap();
   memoryTasksStore = new Map();
   memoryFocusStore = new Map();
+  memoryCalendarSourcesStore = new Map();
+  memoryCalendarEventsStore = new Map();
+  memoryIcsFilesStore = new Map();
+  memoryKeychainStore = new Map();
   memoryBackupsStore = [];
 }
 
@@ -1477,6 +1616,413 @@ export async function setBackupDir(backupDir: string): Promise<string> {
   return trimmed;
 }
 
+// ============================================================================
+// Sources ICS, Trousseau Système & Cache Local d'Événements [AGD-1, AGD-5, PRV-3]
+// ============================================================================
+
+export function buildIcsKeychainRef(sourceId: string): string {
+  return `${KEYCHAIN_ICS_URL_PREFIX}${sourceId.trim()}`;
+}
+
+export function normalizeAndValidateIcsUrl(rawLocation: string): string {
+  const trimmed = (rawLocation || '').trim();
+  if (!trimmed) {
+    throw new Error("L'URL de la source ICS est obligatoire [AGD-1].");
+  }
+  let normalized = trimmed;
+  if (/^webcal:\/\//i.test(normalized)) {
+    normalized = `https://${normalized.slice('webcal://'.length)}`;
+  } else if (/^webcals:\/\//i.test(normalized)) {
+    normalized = `https://${normalized.slice('webcals://'.length)}`;
+  }
+
+  let remainder = '';
+  if (/^https:\/\//i.test(normalized)) {
+    remainder = normalized.slice('https://'.length);
+  } else if (/^http:\/\//i.test(normalized)) {
+    remainder = normalized.slice('http://'.length);
+  } else {
+    throw new Error(
+      `Schéma d'URL ICS invalide pour '${trimmed}'. Utilisez http://, https:// ou webcal:// [AGD-1].`,
+    );
+  }
+
+  const hostPart = remainder.split('/')[0] ?? '';
+  if (!hostPart.trim()) {
+    throw new Error(
+      "L'URL de la source ICS doit comporter un hôte valide [AGD-1].",
+    );
+  }
+
+  return normalized;
+}
+
+export function getBrowserKeychainSecret(keychainRef: string): string | null {
+  return memoryKeychainStore.get(keychainRef.trim()) ?? null;
+}
+
+export async function listCalendarSources(): Promise<CalendarSourceRecord[]> {
+  if (isTauriRuntime()) {
+    return invoke<CalendarSourceRecord[]>('list_calendar_sources');
+  }
+  return Array.from(memoryCalendarSourcesStore.values())
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
+    .map((s) => ({ ...s }));
+}
+
+export async function createCalendarSource(
+  input: CreateCalendarSourceInput,
+): Promise<CalendarSourceRecord> {
+  if (isTauriRuntime()) {
+    return invoke<CalendarSourceRecord>('create_calendar_source', {
+      input: {
+        ...input,
+        location: input.location ?? '',
+      },
+    });
+  }
+
+  const name = (input.name ?? '').trim();
+  if (!name) {
+    throw new Error('Le nom de la source ICS est obligatoire [AGD-1].');
+  }
+
+  const sourceType = (input.source_type ?? '').trim().toLowerCase();
+  if (sourceType !== 'file' && sourceType !== 'url') {
+    throw new Error(
+      `Type de source ICS invalide '${input.source_type}' (attendu : 'file' ou 'url') [AGD-1].`,
+    );
+  }
+
+  const refreshInterval = input.refresh_interval_minutes ?? 30;
+  if (refreshInterval < 5) {
+    throw new Error(
+      "L'intervalle de rafraîchissement ICS doit être d'au moins 5 minutes [AGD-1].",
+    );
+  }
+
+  const id = nextId('ics-src');
+  let locationOrKeychainRef = '';
+
+  if (sourceType === 'url') {
+    const normalizedUrl = normalizeAndValidateIcsUrl(input.location ?? '');
+    locationOrKeychainRef = buildIcsKeychainRef(id);
+    memoryKeychainStore.set(locationOrKeychainRef, normalizedUrl);
+    saveBrowserKeychainToStorage();
+  } else {
+    const rawContent = input.raw_ics_content?.trim();
+    const rawLoc = (input.location ?? '').trim();
+    if (/^(https?|webcals?):\/\//i.test(rawLoc)) {
+      throw new Error(
+        "Une source ICS de type 'file' ne peut pas stocker une URL réseau [PRV-3].",
+      );
+    }
+    if (rawContent) {
+      locationOrKeychainRef = `/ics_sources/${id}.ics`;
+      memoryIcsFilesStore.set(locationOrKeychainRef, input.raw_ics_content!);
+    } else if (rawLoc) {
+      locationOrKeychainRef = rawLoc;
+    } else {
+      throw new Error('Le chemin du fichier ICS est obligatoire [AGD-1].');
+    }
+  }
+
+  const now = new Date().toISOString();
+  const record: CalendarSourceRecord = {
+    id,
+    name,
+    source_type: sourceType,
+    location_or_keychain_ref: locationOrKeychainRef,
+    refresh_interval_minutes: refreshInterval,
+    last_synced_at: null,
+    last_error: null,
+    created_at: now,
+    updated_at: now,
+  };
+
+  memoryCalendarSourcesStore.set(record.id, record);
+  saveBrowserStoreToLocalStorage();
+  return { ...record };
+}
+
+export async function updateCalendarSource(
+  input: UpdateCalendarSourceInput,
+): Promise<CalendarSourceRecord> {
+  if (isTauriRuntime()) {
+    return invoke<CalendarSourceRecord>('update_calendar_source', { input });
+  }
+
+  const existing = memoryCalendarSourcesStore.get(input.id);
+  if (!existing) {
+    throw new Error(`Source ICS introuvable : ${input.id}`);
+  }
+
+  const nextName =
+    input.name !== undefined ? input.name.trim() : existing.name;
+  if (!nextName) {
+    throw new Error('Le nom de la source ICS ne peut pas être vide [AGD-1].');
+  }
+
+  const nextInterval =
+    input.refresh_interval_minutes ?? existing.refresh_interval_minutes;
+  if (nextInterval < 5) {
+    throw new Error(
+      "L'intervalle de rafraîchissement ICS doit être d'au moins 5 minutes [AGD-1].",
+    );
+  }
+
+  let nextLocationOrKeychainRef = existing.location_or_keychain_ref;
+  if (existing.source_type === 'url') {
+    nextLocationOrKeychainRef = buildIcsKeychainRef(existing.id);
+    if (input.location !== undefined) {
+      const normalizedUrl = normalizeAndValidateIcsUrl(input.location);
+      memoryKeychainStore.set(nextLocationOrKeychainRef, normalizedUrl);
+      saveBrowserKeychainToStorage();
+    }
+  } else if (input.raw_ics_content && input.raw_ics_content.trim()) {
+    nextLocationOrKeychainRef = `/ics_sources/${existing.id}.ics`;
+    memoryIcsFilesStore.set(nextLocationOrKeychainRef, input.raw_ics_content);
+  } else if (input.location !== undefined) {
+    const trimmedLoc = input.location.trim();
+    if (!trimmedLoc) {
+      throw new Error(
+        'Le chemin du fichier ICS ne peut pas être vide [AGD-1].',
+      );
+    }
+    if (/^(https?|webcals?):\/\//i.test(trimmedLoc)) {
+      throw new Error(
+        "Une source ICS de type 'file' ne peut pas stocker une URL réseau [PRV-3].",
+      );
+    }
+    nextLocationOrKeychainRef = trimmedLoc;
+  }
+
+  const updated: CalendarSourceRecord = {
+    ...existing,
+    name: nextName,
+    location_or_keychain_ref: nextLocationOrKeychainRef,
+    refresh_interval_minutes: nextInterval,
+    updated_at: new Date().toISOString(),
+  };
+
+  memoryCalendarSourcesStore.set(updated.id, updated);
+  saveBrowserStoreToLocalStorage();
+  return { ...updated };
+}
+
+export async function deleteCalendarSource(id: string): Promise<void> {
+  if (isTauriRuntime()) {
+    await invoke<void>('delete_calendar_source', { id });
+    return;
+  }
+
+  const existing = memoryCalendarSourcesStore.get(id);
+  if (!existing) {
+    throw new Error(`Source ICS introuvable : ${id}`);
+  }
+
+  const canonicalRef = buildIcsKeychainRef(existing.id);
+  memoryKeychainStore.delete(canonicalRef);
+  if (existing.location_or_keychain_ref.startsWith(KEYCHAIN_ICS_URL_PREFIX)) {
+    memoryKeychainStore.delete(existing.location_or_keychain_ref);
+  }
+  saveBrowserKeychainToStorage();
+
+  memoryIcsFilesStore.delete(existing.location_or_keychain_ref);
+  memoryCalendarSourcesStore.delete(id);
+
+  // ON DELETE CASCADE : supprimer les événements rattachés à cette source
+  for (const [evtId, evt] of memoryCalendarEventsStore.entries()) {
+    if (evt.source_id === id) {
+      memoryCalendarEventsStore.delete(evtId);
+    }
+  }
+
+  saveBrowserStoreToLocalStorage();
+}
+
+export async function recordCalendarSourceError(
+  sourceId: string,
+  errorMessage: string,
+): Promise<CalendarSourceRecord> {
+  if (isTauriRuntime()) {
+    return invoke<CalendarSourceRecord>('record_calendar_source_error', {
+      sourceId,
+      source_id: sourceId,
+      errorMessage,
+      error_message: errorMessage,
+    });
+  }
+
+  const existing = memoryCalendarSourcesStore.get(sourceId);
+  if (!existing) {
+    throw new Error(`Source ICS introuvable : ${sourceId}`);
+  }
+
+  const updated: CalendarSourceRecord = {
+    ...existing,
+    last_error: errorMessage.trim(),
+    updated_at: new Date().toISOString(),
+  };
+  memoryCalendarSourcesStore.set(updated.id, updated);
+  saveBrowserStoreToLocalStorage();
+  return { ...updated };
+}
+
+export async function fetchCalendarSourceIcs(id: string): Promise<string> {
+  if (isTauriRuntime()) {
+    return invoke<string>('fetch_calendar_source_ics', { id });
+  }
+
+  const source = memoryCalendarSourcesStore.get(id);
+  if (!source) {
+    throw new Error(`Source ICS introuvable : ${id}`);
+  }
+
+  try {
+    if (source.source_type === 'file') {
+      const content = memoryIcsFilesStore.get(source.location_or_keychain_ref);
+      if (!content) {
+        throw new Error(
+          `Impossible de lire le fichier ICS '${source.location_or_keychain_ref}'.`,
+        );
+      }
+      return content;
+    }
+
+    const secretUrl = memoryKeychainStore.get(source.location_or_keychain_ref);
+    if (!secretUrl) {
+      throw new Error(
+        'URL ICS introuvable dans le trousseau système [PRV-3].',
+      );
+    }
+
+    if (typeof fetch !== 'function') {
+      throw new Error("API fetch indisponible dans cet environnement.");
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(secretUrl, { signal: controller.signal });
+      if (!response.ok) {
+        throw new Error(`Statut HTTP d'erreur ${response.status}`);
+      }
+      const text = await response.text();
+      if (!text.trim()) {
+        throw new Error('Le flux ICS téléchargé est vide.');
+      }
+      return text;
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err) {
+    const message =
+      err instanceof Error ? err.message : 'Erreur de lecture du flux ICS';
+    await recordCalendarSourceError(source.id, message);
+    throw err instanceof Error ? err : new Error(message);
+  }
+}
+
+export async function saveCalendarEventsForSource(
+  sourceId: string,
+  events: CalendarEventInput[],
+): Promise<CalendarEventRecord[]> {
+  if (isTauriRuntime()) {
+    return invoke<CalendarEventRecord[]>('save_calendar_events_for_source', {
+      sourceId,
+      source_id: sourceId,
+      events,
+    });
+  }
+
+  const existingSource = memoryCalendarSourcesStore.get(sourceId);
+  if (!existingSource) {
+    throw new Error(`Source ICS introuvable : ${sourceId}`);
+  }
+
+  // Transaction atomique en mémoire : valider d'abord tous les événements avant de remplacer
+  const prepared: CalendarEventRecord[] = events.map((item) => {
+    const icsUid = (item.ics_uid ?? '').trim();
+    if (!icsUid) {
+      throw new Error(
+        "L'identifiant UID ICS de l'événement est obligatoire.",
+      );
+    }
+    const startAt = (item.start_at ?? '').trim();
+    const endAt = (item.end_at ?? '').trim();
+    if (!startAt || !endAt) {
+      throw new Error(
+        "Les dates de début et de fin de l'événement sont obligatoires.",
+      );
+    }
+    const title = (item.title ?? '').trim() || '(Sans titre)';
+    const exdatesJson =
+      item.exdates_json && item.exdates_json.trim()
+        ? item.exdates_json.trim()
+        : item.exdates
+          ? JSON.stringify(item.exdates)
+          : '[]';
+
+    return {
+      id: item.id?.trim() ? item.id.trim() : nextId('evt'),
+      source_id: existingSource.id,
+      ics_uid: icsUid,
+      title,
+      start_at: startAt,
+      end_at: endAt,
+      is_all_day: Boolean(item.is_all_day),
+      location: item.location ?? '',
+      notes: item.notes ?? '',
+      rrule: item.rrule?.trim() ? item.rrule.trim() : null,
+      exdates_json: exdatesJson,
+    };
+  });
+
+  for (const [evtId, evt] of memoryCalendarEventsStore.entries()) {
+    if (evt.source_id === existingSource.id) {
+      memoryCalendarEventsStore.delete(evtId);
+    }
+  }
+
+  for (const record of prepared) {
+    memoryCalendarEventsStore.set(record.id, record);
+  }
+
+  const now = new Date().toISOString();
+  memoryCalendarSourcesStore.set(existingSource.id, {
+    ...existingSource,
+    last_synced_at: now,
+    last_error: null,
+    updated_at: now,
+  });
+
+  saveBrowserStoreToLocalStorage();
+  return listCalendarEvents(existingSource.id);
+}
+
+export async function listCalendarEvents(
+  sourceId?: string,
+): Promise<CalendarEventRecord[]> {
+  if (isTauriRuntime()) {
+    return invoke<CalendarEventRecord[]>('list_calendar_events', {
+      sourceId: sourceId ?? null,
+      source_id: sourceId ?? null,
+    });
+  }
+
+  const trimmedSourceId = sourceId?.trim();
+  return Array.from(memoryCalendarEventsStore.values())
+    .filter((evt) => !trimmedSourceId || evt.source_id === trimmedSourceId)
+    .sort((a, b) => {
+      if (a.start_at !== b.start_at) {
+        return a.start_at.localeCompare(b.start_at);
+      }
+      return a.id.localeCompare(b.id);
+    })
+    .map((e) => ({ ...e }));
+}
+
 export async function exportFullJson(destPath?: string): Promise<string> {
   if (isTauriRuntime()) {
     return invoke<string>('export_full_json', {
@@ -1500,8 +2046,12 @@ export async function exportFullJson(destPath?: string): Promise<string> {
       }
       return a.position - b.position;
     }),
-    calendar_sources: [],
-    calendar_events: [],
+    calendar_sources: Array.from(memoryCalendarSourcesStore.values()).sort(
+      (a, b) => a.created_at.localeCompare(b.created_at),
+    ),
+    calendar_events: Array.from(memoryCalendarEventsStore.values()).sort(
+      (a, b) => a.start_at.localeCompare(b.start_at),
+    ),
     launcher_items: [],
     commands: [],
     settings: Array.from(memorySettingsStore.values()).sort((a, b) =>

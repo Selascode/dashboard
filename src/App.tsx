@@ -12,7 +12,8 @@ import {
   UndoCommandKind,
 } from './lib/command-history';
 import { AppScreenId, CommandId } from './lib/commands';
-import { TaskRecord, listTasks } from './lib/db';
+import { syncAllCalendarSources } from './lib/calendar-engine';
+import { TaskRecord, listCalendarSources, listTasks } from './lib/db';
 import { AgendaPage } from './pages/AgendaPage';
 import { BriefingPage } from './pages/BriefingPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -73,6 +74,35 @@ export const AppContent: React.FC = () => {
     return commandHistoryRef.current.subscribe((snapshot) => {
       setHistorySnapshot(snapshot);
     });
+  }, []);
+
+  // AGD-1 & PRV-1 : Synchronisation périodique en arrière-plan (30 min par défaut)
+  // uniquement si au moins une source ICS est configurée par l'utilisateur.
+  useEffect(() => {
+    let active = true;
+    const runPeriodicIcsSync = async () => {
+      try {
+        const sources = await listCalendarSources();
+        if (!active || sources.length === 0) {
+          return;
+        }
+        await syncAllCalendarSources({ onlyDue: true });
+      } catch {
+        // Ignorer les erreurs réseau en arrière-plan (le cache hors-ligne AGD-5 est préservé)
+      }
+    };
+
+    const intervalId = window.setInterval(
+      () => {
+        void runPeriodicIcsSync();
+      },
+      60 * 1000,
+    );
+
+    return () => {
+      active = false;
+      window.clearInterval(intervalId);
+    };
   }, []);
 
   const pushUndoAction = useCallback((action: UndoAction) => {

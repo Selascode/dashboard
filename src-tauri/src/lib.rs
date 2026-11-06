@@ -3,17 +3,25 @@ pub mod db;
 use chrono::Utc;
 use db::{
     add_focus_item as db_add_focus_item, complete_task as db_complete_task,
-    create_category as db_create_category, create_task as db_create_task,
+    create_calendar_source as db_create_calendar_source, create_category as db_create_category,
+    create_task as db_create_task, delete_calendar_source as db_delete_calendar_source,
     delete_category as db_delete_category, delete_task as db_delete_task,
-    export_full_database_pretty_json, get_current_schema_version, initialize_database,
-    list_backup_files, query_active_categories, query_active_tasks, query_all_settings,
-    query_focus_items_by_day, query_setting, query_uncompleted_past_focus_items,
+    export_full_database_pretty_json, fetch_calendar_source_ics as db_fetch_calendar_source_ics,
+    get_current_schema_version, initialize_database, list_backup_files,
+    list_calendar_events as db_list_calendar_events,
+    list_calendar_sources as db_list_calendar_sources, query_active_categories,
+    query_active_tasks, query_all_settings, query_focus_items_by_day, query_setting,
+    query_uncompleted_past_focus_items,
+    record_calendar_source_error as db_record_calendar_source_error,
     remove_focus_item as db_remove_focus_item, reorder_focus_items as db_reorder_focus_items,
     restore_task as db_restore_task, run_scheduled_or_exit_backup,
-    update_category as db_update_category, update_task as db_update_task, upsert_setting,
-    verify_schema_integrity, AppDbState, BackupFileInfo, BackupReport, Category,
-    CreateCategoryInput, CreateTaskInput, DbStatus, FocusItem, Setting, Task, UpdateCategoryInput,
-    UpdateTaskInput, ALL_TABLES, SYNCHRONIZABLE_TABLES,
+    save_calendar_events_for_source as db_save_calendar_events_for_source,
+    update_calendar_source as db_update_calendar_source, update_category as db_update_category,
+    update_task as db_update_task, upsert_setting, verify_schema_integrity, AppDbState,
+    BackupFileInfo, BackupReport, CalendarEvent, CalendarEventInput, CalendarSource, Category,
+    CreateCalendarSourceInput, CreateCategoryInput, CreateTaskInput, DbStatus, FocusItem, Setting,
+    Task, UpdateCalendarSourceInput, UpdateCategoryInput, UpdateTaskInput, ALL_TABLES,
+    SYNCHRONIZABLE_TABLES,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -196,6 +204,71 @@ fn list_uncompleted_past_focus_items(
 }
 
 #[tauri::command]
+fn list_calendar_sources(state: State<'_, AppDbState>) -> Result<Vec<CalendarSource>, String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    db_list_calendar_sources(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn create_calendar_source(
+    input: CreateCalendarSourceInput,
+    state: State<'_, AppDbState>,
+) -> Result<CalendarSource, String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    db_create_calendar_source(&conn, input).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_calendar_source(
+    input: UpdateCalendarSourceInput,
+    state: State<'_, AppDbState>,
+) -> Result<CalendarSource, String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    db_update_calendar_source(&conn, input).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn delete_calendar_source(id: String, state: State<'_, AppDbState>) -> Result<(), String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    db_delete_calendar_source(&conn, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn fetch_calendar_source_ics(id: String, state: State<'_, AppDbState>) -> Result<String, String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    db_fetch_calendar_source_ics(&conn, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn save_calendar_events_for_source(
+    source_id: String,
+    events: Vec<CalendarEventInput>,
+    state: State<'_, AppDbState>,
+) -> Result<Vec<CalendarEvent>, String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    db_save_calendar_events_for_source(&conn, &source_id, events).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn record_calendar_source_error(
+    source_id: String,
+    error_message: String,
+    state: State<'_, AppDbState>,
+) -> Result<CalendarSource, String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    db_record_calendar_source_error(&conn, &source_id, &error_message).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn list_calendar_events(
+    source_id: Option<String>,
+    state: State<'_, AppDbState>,
+) -> Result<Vec<CalendarEvent>, String> {
+    let conn = state.conn.lock().map_err(|e| e.to_string())?;
+    db_list_calendar_events(&conn, source_id.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 fn trigger_backup(
     force: Option<bool>,
     state: State<'_, AppDbState>,
@@ -373,6 +446,14 @@ pub fn run() {
             remove_focus_item,
             reorder_focus_items,
             list_uncompleted_past_focus_items,
+            list_calendar_sources,
+            create_calendar_source,
+            update_calendar_source,
+            delete_calendar_source,
+            fetch_calendar_source_ics,
+            save_calendar_events_for_source,
+            record_calendar_source_error,
+            list_calendar_events,
             trigger_backup,
             list_backups,
             set_backup_dir,

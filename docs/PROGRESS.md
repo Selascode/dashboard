@@ -68,13 +68,13 @@
 
 ### Jalon J3 — Agenda en Lecture Seule (2 semaines)
 **Objectif de sortie :** L'emploi du temps s'affiche à l'identique de la source ICS.
-- [ ] `AGD-1` **[Must]** : Ajout d'une source ICS par fichier ou URL ; actualisation manuelle et auto (toutes les 30 min par défaut)
-- [ ] `AGD-2` **[Must]** : Bascule en un clic entre vues Semaine et Mois ; affichage de la journée en cours sur le Dashboard
-- [ ] `AGD-3` **[Must]** : Détail d'un événement en lecture seule (titre, heures, lieu, notes)
-- [ ] `AGD-4` **[Must]** : Prise en charge des règles de récurrence (`RRULE`) et exceptions via `ical.js`
-- [ ] `AGD-5` **[Should]** : Consultation hors ligne (conservation du dernier état valide en cas d'erreur de synchro)
-- [ ] `AGD-6` **[Should]** : Superposition distincte des échéances de tâches dans l'agenda
-- [ ] `PRV-3` **[Must]** : Stockage des URL ICS privées dans le trousseau du système (jamais en base ni dans les sauvegardes en clair)
+- [x] `AGD-1` **[Must]** : Ajout d'une source ICS par fichier ou URL ; actualisation manuelle et auto (toutes les 30 min par défaut) (`feat/ui-design-system`)
+- [x] `AGD-2` **[Must]** : Bascule en un clic entre vues Semaine et Mois ; affichage de la journée en cours sur le Dashboard (`feat/ui-design-system`)
+- [x] `AGD-3` **[Must]** : Détail d'un événement en lecture seule (titre, heures, lieu, notes) (`feat/ui-design-system`)
+- [x] `AGD-4` **[Must]** : Prise en charge des règles de récurrence (`RRULE`) et exceptions via `ical.js` (`feat/ui-design-system`)
+- [x] `AGD-5` **[Should]** : Consultation hors ligne (conservation du dernier état valide en cas d'erreur de synchro) (`feat/ui-design-system`)
+- [x] `AGD-6` **[Should]** : Superposition distincte des échéances de tâches dans l'agenda (`feat/ui-design-system`)
+- [x] `PRV-3` **[Must]** : Stockage des URL ICS privées dans le trousseau du système (jamais en base ni dans les sauvegardes en clair) (`feat/ui-design-system`)
 
 ### Jalon J4 — Lanceur, Palette & Personnalisation (2 semaines)
 **Objectif de sortie :** Toute l'application se pilote intégralement au clavier.

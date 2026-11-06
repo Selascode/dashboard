@@ -1,9 +1,12 @@
 use chrono::Utc;
 use rusqlite::{backup::Backup, params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
+use std::io::{Read, Write};
+use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
@@ -74,6 +77,10 @@ pub enum DbError {
     Validation(String),
     #[error("Élément introuvable: {0}")]
     NotFound(String),
+    #[error("Erreur de trousseau système: {0}")]
+    Keychain(String),
+    #[error("Erreur réseau/flux ICS: {0}")]
+    Network(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -185,6 +192,25 @@ pub struct CalendarSource {
     pub updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CreateCalendarSourceInput {
+    pub name: String,
+    pub source_type: String,
+    #[serde(default)]
+    pub location: String,
+    pub refresh_interval_minutes: Option<i64>,
+    pub raw_ics_content: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UpdateCalendarSourceInput {
+    pub id: String,
+    pub name: Option<String>,
+    pub location: Option<String>,
+    pub refresh_interval_minutes: Option<i64>,
+    pub raw_ics_content: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CalendarEvent {
     pub id: String,
@@ -198,6 +224,22 @@ pub struct CalendarEvent {
     pub notes: String,
     pub rrule: Option<String>,
     pub exdates_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CalendarEventInput {
+    pub id: Option<String>,
+    pub ics_uid: String,
+    pub title: String,
+    pub start_at: String,
+    pub end_at: String,
+    #[serde(default)]
+    pub is_all_day: bool,
+    pub location: Option<String>,
+    pub notes: Option<String>,
+    pub rrule: Option<String>,
+    pub exdates_json: Option<String>,
+    pub exdates: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1295,6 +1337,945 @@ pub fn query_uncompleted_past_focus_items(
 }
 
 // ============================================================================
+// Trousseau Système & Sources ICS / Cache Local d'Événements [PRV-3, AGD-1, AGD-5]
+// ============================================================================
+
+pub const KEYCHAIN_SERVICE_NAME: &str = "com.selas.productivity-dashboard.ics";
+pub const KEYCHAIN_ICS_URL_PREFIX: &str = "keychain:ics_url:";
+pub const ICS_HTTP_TIMEOUT_SECS: u64 = 15;
+
+static MEMORY_KEYCHAIN: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+
+fn memory_keychain_store() -> &'static Mutex<HashMap<String, String>> {
+    MEMORY_KEYCHAIN.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Construit la référence opaque stockée dans `calendar_sources.location_or_keychain_ref` [PRV-3].
+pub fn build_ics_keychain_ref(source_id: &str) -> String {
+    format!("{}{}", KEYCHAIN_ICS_URL_PREFIX, source_id.trim())
+}
+
+/// Indique si une chaîne est une référence de trousseau `keychain:ics_url:<id>`.
+pub fn is_ics_keychain_ref(value: &str) -> bool {
+    value.trim().starts_with(KEYCHAIN_ICS_URL_PREFIX)
+}
+
+/// Gestionnaire de trousseau système (`KeychainStore`) avec magasin isolé hors-SQLite
+/// pour les environnements Linux headless / CI [PRV-3].
+#[derive(Debug, Clone)]
+pub struct KeychainStore {
+    vault_file_path: Option<PathBuf>,
+}
+
+impl KeychainStore {
+    /// Crée un `KeychainStore` rattaché au dossier parent de la connexion SQLite
+    /// (dans un sous-dossier isolé `vault/keychain_vault.json`, hors de `dashboard.db` et hors de `backups/`).
+    pub fn for_connection(conn: &Connection) -> Self {
+        let db_path = conn
+            .path()
+            .filter(|p| !p.is_empty())
+            .map(PathBuf::from);
+
+        match db_path {
+            Some(path) => Self::for_db_path(&path),
+            None => Self {
+                vault_file_path: None,
+            },
+        }
+    }
+
+    pub fn for_db_path(db_path: &Path) -> Self {
+        let parent = db_path.parent().unwrap_or_else(|| Path::new("."));
+        let vault_file_path = parent.join("vault").join("keychain_vault.json");
+        Self {
+            vault_file_path: Some(vault_file_path),
+        }
+    }
+
+    pub fn vault_file_path(&self) -> Option<&Path> {
+        self.vault_file_path.as_deref()
+    }
+
+    /// Enregistre un secret dans le trousseau et le magasin isolé hors-SQLite [PRV-3].
+    pub fn set_secret(&self, keychain_ref: &str, secret: &str) -> Result<(), DbError> {
+        let key = keychain_ref.trim();
+        let val = secret.trim();
+        if key.is_empty() {
+            return Err(DbError::Keychain(
+                "La référence de trousseau ne peut pas être vide.".to_string(),
+            ));
+        }
+        if val.is_empty() {
+            return Err(DbError::Keychain(
+                "Le secret à stocker dans le trousseau ne peut pas être vide.".to_string(),
+            ));
+        }
+
+        let _ = Self::try_os_set_secret(key, val);
+
+        if let Ok(mut map) = memory_keychain_store().lock() {
+            map.insert(key.to_string(), val.to_string());
+        }
+
+        if let Some(vault_path) = &self.vault_file_path {
+            let mut entries = self.read_vault_file(vault_path);
+            entries.insert(key.to_string(), val.to_string());
+            self.write_vault_file(vault_path, &entries)?;
+        }
+
+        Ok(())
+    }
+
+    /// Récupère un secret depuis le trousseau ou le magasin isolé hors-SQLite [PRV-3].
+    pub fn get_secret(&self, keychain_ref: &str) -> Result<Option<String>, DbError> {
+        let key = keychain_ref.trim();
+        if key.is_empty() {
+            return Ok(None);
+        }
+
+        if let Some(secret) = Self::try_os_get_secret(key) {
+            if !secret.is_empty() {
+                return Ok(Some(secret));
+            }
+        }
+
+        if let Some(vault_path) = &self.vault_file_path {
+            let entries = self.read_vault_file(vault_path);
+            if let Some(val) = entries.get(key) {
+                return Ok(Some(val.clone()));
+            }
+        }
+
+        if let Ok(map) = memory_keychain_store().lock() {
+            if let Some(val) = map.get(key) {
+                return Ok(Some(val.clone()));
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Supprime un secret du trousseau et du magasin isolé hors-SQLite [PRV-3].
+    pub fn delete_secret(&self, keychain_ref: &str) -> Result<(), DbError> {
+        let key = keychain_ref.trim();
+        if key.is_empty() {
+            return Ok(());
+        }
+
+        let _ = Self::try_os_delete_secret(key);
+
+        if let Ok(mut map) = memory_keychain_store().lock() {
+            map.remove(key);
+        }
+
+        if let Some(vault_path) = &self.vault_file_path {
+            if vault_path.exists() {
+                let mut entries = self.read_vault_file(vault_path);
+                if entries.remove(key).is_some() {
+                    self.write_vault_file(vault_path, &entries)?;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn read_vault_file(&self, vault_path: &Path) -> HashMap<String, String> {
+        let Ok(raw) = fs::read_to_string(vault_path) else {
+            return HashMap::new();
+        };
+        serde_json::from_str::<HashMap<String, String>>(&raw).unwrap_or_default()
+    }
+
+    fn write_vault_file(
+        &self,
+        vault_path: &Path,
+        entries: &HashMap<String, String>,
+    ) -> Result<(), DbError> {
+        if let Some(parent) = vault_path.parent() {
+            fs::create_dir_all(parent)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+            }
+        }
+
+        let serialized = serde_json::to_string_pretty(entries)?;
+        fs::write(vault_path, serialized)?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = fs::set_permissions(vault_path, fs::Permissions::from_mode(0o600));
+        }
+
+        Ok(())
+    }
+
+    #[cfg(test)]
+    fn os_keychain_enabled() -> bool {
+        false
+    }
+
+    #[cfg(not(test))]
+    fn os_keychain_enabled() -> bool {
+        std::env::var("FOCUS_DISABLE_OS_KEYCHAIN").is_err()
+    }
+
+    fn try_os_set_secret(key: &str, secret: &str) -> bool {
+        if !Self::os_keychain_enabled() {
+            return false;
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            if std::env::var("DBUS_SESSION_BUS_ADDRESS").is_ok() {
+                use std::process::{Command, Stdio};
+                if let Ok(mut child) = Command::new("secret-tool")
+                    .args([
+                        "store",
+                        "--label=Productivity Dashboard ICS URL",
+                        "service",
+                        KEYCHAIN_SERVICE_NAME,
+                        "account",
+                        key,
+                    ])
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                {
+                    if let Some(mut stdin) = child.stdin.take() {
+                        let _ = stdin.write_all(secret.as_bytes());
+                    }
+                    if let Ok(status) = child.wait() {
+                        return status.success();
+                    }
+                }
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            use std::process::{Command, Stdio};
+            if let Ok(status) = Command::new("security")
+                .args([
+                    "add-generic-password",
+                    "-U",
+                    "-s",
+                    KEYCHAIN_SERVICE_NAME,
+                    "-a",
+                    key,
+                    "-w",
+                    secret,
+                ])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+            {
+                return status.success();
+            }
+        }
+
+        let _ = (key, secret);
+        false
+    }
+
+    fn try_os_get_secret(key: &str) -> Option<String> {
+        if !Self::os_keychain_enabled() {
+            return None;
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            if std::env::var("DBUS_SESSION_BUS_ADDRESS").is_ok() {
+                use std::process::Command;
+                if let Ok(output) = Command::new("secret-tool")
+                    .args(["lookup", "service", KEYCHAIN_SERVICE_NAME, "account", key])
+                    .output()
+                {
+                    if output.status.success() {
+                        let secret = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        if !secret.is_empty() {
+                            return Some(secret);
+                        }
+                    }
+                }
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            use std::process::Command;
+            if let Ok(output) = Command::new("security")
+                .args([
+                    "find-generic-password",
+                    "-s",
+                    KEYCHAIN_SERVICE_NAME,
+                    "-a",
+                    key,
+                    "-w",
+                ])
+                .output()
+            {
+                if output.status.success() {
+                    let secret = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    if !secret.is_empty() {
+                        return Some(secret);
+                    }
+                }
+            }
+        }
+
+        let _ = key;
+        None
+    }
+
+    fn try_os_delete_secret(key: &str) -> bool {
+        if !Self::os_keychain_enabled() {
+            return false;
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            if std::env::var("DBUS_SESSION_BUS_ADDRESS").is_ok() {
+                use std::process::{Command, Stdio};
+                if let Ok(status) = Command::new("secret-tool")
+                    .args(["clear", "service", KEYCHAIN_SERVICE_NAME, "account", key])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                {
+                    return status.success();
+                }
+            }
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            use std::process::{Command, Stdio};
+            if let Ok(status) = Command::new("security")
+                .args([
+                    "delete-generic-password",
+                    "-s",
+                    KEYCHAIN_SERVICE_NAME,
+                    "-a",
+                    key,
+                ])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+            {
+                return status.success();
+            }
+        }
+
+        let _ = key;
+        false
+    }
+}
+
+fn map_calendar_source_row(row: &rusqlite::Row<'_>) -> Result<CalendarSource, rusqlite::Error> {
+    Ok(CalendarSource {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        source_type: row.get(2)?,
+        location_or_keychain_ref: row.get(3)?,
+        refresh_interval_minutes: row.get(4)?,
+        last_synced_at: row.get(5)?,
+        last_error: row.get(6)?,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
+    })
+}
+
+fn map_calendar_event_row(row: &rusqlite::Row<'_>) -> Result<CalendarEvent, rusqlite::Error> {
+    let is_all_day_int: i64 = row.get(6)?;
+    Ok(CalendarEvent {
+        id: row.get(0)?,
+        source_id: row.get(1)?,
+        ics_uid: row.get(2)?,
+        title: row.get(3)?,
+        start_at: row.get(4)?,
+        end_at: row.get(5)?,
+        is_all_day: is_all_day_int != 0,
+        location: row.get(7)?,
+        notes: row.get(8)?,
+        rrule: row.get(9)?,
+        exdates_json: row.get(10)?,
+    })
+}
+
+/// Normalise et valide une URL de source ICS (`http://`, `https://`, ou `webcal://` converti en `https://`) [AGD-1, PRV-3].
+pub fn normalize_and_validate_ics_url(raw_location: &str) -> Result<String, DbError> {
+    let trimmed = raw_location.trim();
+    if trimmed.is_empty() {
+        return Err(DbError::Validation(
+            "L'URL de la source ICS est obligatoire [AGD-1].".to_string(),
+        ));
+    }
+
+    let normalized = if trimmed.len() >= 9 && trimmed[..9].eq_ignore_ascii_case("webcal://") {
+        format!("https://{}", &trimmed[9..])
+    } else if trimmed.len() >= 10 && trimmed[..10].eq_ignore_ascii_case("webcals://") {
+        format!("https://{}", &trimmed[10..])
+    } else {
+        trimmed.to_string()
+    };
+
+    let lower = normalized.to_ascii_lowercase();
+    let remainder = if let Some(rest) = lower.strip_prefix("https://") {
+        rest
+    } else if let Some(rest) = lower.strip_prefix("http://") {
+        rest
+    } else {
+        return Err(DbError::Validation(format!(
+            "Schéma d'URL ICS invalide pour '{}'. Utilisez http://, https:// ou webcal:// [AGD-1].",
+            trimmed
+        )));
+    };
+
+    let host_part = remainder.split('/').next().unwrap_or("");
+    if host_part.trim().is_empty() {
+        return Err(DbError::Validation(
+            "L'URL de la source ICS doit comporter un hôte valide [AGD-1].".to_string(),
+        ));
+    }
+
+    Ok(normalized)
+}
+
+fn managed_ics_sources_dir(conn: &Connection) -> PathBuf {
+    let parent = conn
+        .path()
+        .filter(|p| !p.is_empty())
+        .and_then(|p| Path::new(p).parent().map(PathBuf::from))
+        .unwrap_or_else(|| std::env::temp_dir().join("productivity-dashboard"));
+    parent.join("ics_sources")
+}
+
+fn save_raw_ics_file_for_source(
+    conn: &Connection,
+    source_id: &str,
+    raw_content: &str,
+) -> Result<String, DbError> {
+    let dir = managed_ics_sources_dir(conn);
+    fs::create_dir_all(&dir)?;
+    let file_path = dir.join(format!("{}.ics", source_id));
+    fs::write(&file_path, raw_content)?;
+    Ok(file_path.to_string_lossy().into_owned())
+}
+
+pub fn list_calendar_sources(conn: &Connection) -> Result<Vec<CalendarSource>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, source_type, location_or_keychain_ref, refresh_interval_minutes,
+                last_synced_at, last_error, created_at, updated_at
+         FROM calendar_sources
+         ORDER BY created_at ASC, id ASC",
+    )?;
+    let rows = stmt
+        .query_map([], map_calendar_source_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+pub fn get_calendar_source_by_id(
+    conn: &Connection,
+    id: &str,
+) -> Result<Option<CalendarSource>, DbError> {
+    let source = conn
+        .query_row(
+            "SELECT id, name, source_type, location_or_keychain_ref, refresh_interval_minutes,
+                    last_synced_at, last_error, created_at, updated_at
+             FROM calendar_sources
+             WHERE id = ?1",
+            params![id],
+            map_calendar_source_row,
+        )
+        .optional()?;
+    Ok(source)
+}
+
+pub fn create_calendar_source(
+    conn: &Connection,
+    input: CreateCalendarSourceInput,
+) -> Result<CalendarSource, DbError> {
+    let name = input.name.trim().to_string();
+    if name.is_empty() {
+        return Err(DbError::Validation(
+            "Le nom de la source ICS est obligatoire [AGD-1].".to_string(),
+        ));
+    }
+
+    let source_type = input.source_type.trim().to_ascii_lowercase();
+    if !matches!(source_type.as_str(), "file" | "url") {
+        return Err(DbError::Validation(format!(
+            "Type de source ICS invalide '{}' (attendu : 'file' ou 'url') [AGD-1].",
+            input.source_type
+        )));
+    }
+
+    let refresh_interval_minutes = input.refresh_interval_minutes.unwrap_or(30);
+    if refresh_interval_minutes < 5 {
+        return Err(DbError::Validation(
+            "L'intervalle de rafraîchissement ICS doit être d'au moins 5 minutes [AGD-1]."
+                .to_string(),
+        ));
+    }
+
+    let id = format!("ics-src-{}", Uuid::new_v4());
+    let location_or_keychain_ref = if source_type == "url" {
+        let normalized_url = normalize_and_validate_ics_url(&input.location)?;
+        let keychain_ref = build_ics_keychain_ref(&id);
+        let keychain = KeychainStore::for_connection(conn);
+        keychain.set_secret(&keychain_ref, &normalized_url)?;
+        keychain_ref
+    } else if let Some(raw_ics) = input
+        .raw_ics_content
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        save_raw_ics_file_for_source(conn, &id, raw_ics)?
+    } else {
+        let trimmed_loc = input.location.trim();
+        if trimmed_loc.is_empty() {
+            return Err(DbError::Validation(
+                "Le chemin du fichier ICS est obligatoire [AGD-1].".to_string(),
+            ));
+        }
+        let lower_loc = trimmed_loc.to_ascii_lowercase();
+        if lower_loc.starts_with("http://")
+            || lower_loc.starts_with("https://")
+            || lower_loc.starts_with("webcal://")
+            || lower_loc.starts_with("webcals://")
+        {
+            return Err(DbError::Validation(
+                "Une source ICS de type 'file' ne peut pas stocker une URL réseau [PRV-3]."
+                    .to_string(),
+            ));
+        }
+        trimmed_loc.to_string()
+    };
+
+    let now = now_utc_iso();
+    conn.execute(
+        "INSERT INTO calendar_sources (
+            id, name, source_type, location_or_keychain_ref, refresh_interval_minutes,
+            last_synced_at, last_error, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6, ?7)",
+        params![
+            id,
+            name,
+            source_type,
+            location_or_keychain_ref,
+            refresh_interval_minutes,
+            now,
+            now
+        ],
+    )?;
+
+    get_calendar_source_by_id(conn, &id)?.ok_or_else(|| {
+        DbError::NotFound(format!("Source ICS '{}' introuvable après création", id))
+    })
+}
+
+pub fn update_calendar_source(
+    conn: &Connection,
+    input: UpdateCalendarSourceInput,
+) -> Result<CalendarSource, DbError> {
+    let existing = get_calendar_source_by_id(conn, &input.id)?
+        .ok_or_else(|| DbError::NotFound(format!("Source ICS '{}' introuvable", input.id)))?;
+
+    let name = match input.name {
+        Some(n) => {
+            let trimmed = n.trim().to_string();
+            if trimmed.is_empty() {
+                return Err(DbError::Validation(
+                    "Le nom de la source ICS ne peut pas être vide [AGD-1].".to_string(),
+                ));
+            }
+            trimmed
+        }
+        None => existing.name,
+    };
+
+    let refresh_interval_minutes = match input.refresh_interval_minutes {
+        Some(interval) => {
+            if interval < 5 {
+                return Err(DbError::Validation(
+                    "L'intervalle de rafraîchissement ICS doit être d'au moins 5 minutes [AGD-1]."
+                        .to_string(),
+                ));
+            }
+            interval
+        }
+        None => existing.refresh_interval_minutes,
+    };
+
+    let location_or_keychain_ref = if existing.source_type == "url" {
+        let keychain_ref = build_ics_keychain_ref(&existing.id);
+        if let Some(loc) = input.location {
+            let normalized_url = normalize_and_validate_ics_url(&loc)?;
+            let keychain = KeychainStore::for_connection(conn);
+            keychain.set_secret(&keychain_ref, &normalized_url)?;
+        }
+        keychain_ref
+    } else if let Some(raw_ics) = input
+        .raw_ics_content
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        save_raw_ics_file_for_source(conn, &existing.id, raw_ics)?
+    } else if let Some(loc) = input.location {
+        let trimmed_loc = loc.trim();
+        if trimmed_loc.is_empty() {
+            return Err(DbError::Validation(
+                "Le chemin du fichier ICS ne peut pas être vide [AGD-1].".to_string(),
+            ));
+        }
+        let lower_loc = trimmed_loc.to_ascii_lowercase();
+        if lower_loc.starts_with("http://")
+            || lower_loc.starts_with("https://")
+            || lower_loc.starts_with("webcal://")
+            || lower_loc.starts_with("webcals://")
+        {
+            return Err(DbError::Validation(
+                "Une source ICS de type 'file' ne peut pas stocker une URL réseau [PRV-3]."
+                    .to_string(),
+            ));
+        }
+        trimmed_loc.to_string()
+    } else {
+        existing.location_or_keychain_ref
+    };
+
+    let now = now_utc_iso();
+    conn.execute(
+        "UPDATE calendar_sources
+         SET name = ?1,
+             location_or_keychain_ref = ?2,
+             refresh_interval_minutes = ?3,
+             updated_at = ?4
+         WHERE id = ?5",
+        params![
+            name,
+            location_or_keychain_ref,
+            refresh_interval_minutes,
+            now,
+            existing.id
+        ],
+    )?;
+
+    get_calendar_source_by_id(conn, &existing.id)?
+        .ok_or_else(|| DbError::NotFound(format!("Source ICS '{}' introuvable", existing.id)))
+}
+
+pub fn delete_calendar_source(conn: &Connection, id: &str) -> Result<(), DbError> {
+    let existing = get_calendar_source_by_id(conn, id)?
+        .ok_or_else(|| DbError::NotFound(format!("Source ICS '{}' introuvable", id)))?;
+
+    let keychain = KeychainStore::for_connection(conn);
+    let canonical_ref = build_ics_keychain_ref(&existing.id);
+    let _ = keychain.delete_secret(&canonical_ref);
+    if is_ics_keychain_ref(&existing.location_or_keychain_ref) {
+        let _ = keychain.delete_secret(&existing.location_or_keychain_ref);
+    }
+
+    if existing.source_type == "file" {
+        let managed_dir = managed_ics_sources_dir(conn);
+        let file_path = PathBuf::from(&existing.location_or_keychain_ref);
+        if file_path.starts_with(&managed_dir) && file_path.exists() {
+            let _ = fs::remove_file(file_path);
+        }
+    }
+
+    conn.execute("DELETE FROM calendar_sources WHERE id = ?1", params![id])?;
+    Ok(())
+}
+
+/// Enregistre un message d'erreur sur `calendar_sources` sans jamais modifier ni supprimer
+/// les événements déjà stockés dans `calendar_events` [AGD-5].
+pub fn record_calendar_source_error(
+    conn: &Connection,
+    source_id: &str,
+    error_message: &str,
+) -> Result<CalendarSource, DbError> {
+    let existing = get_calendar_source_by_id(conn, source_id)?
+        .ok_or_else(|| DbError::NotFound(format!("Source ICS '{}' introuvable", source_id)))?;
+
+    let now = now_utc_iso();
+    conn.execute(
+        "UPDATE calendar_sources
+         SET last_error = ?1,
+             updated_at = ?2
+         WHERE id = ?3",
+        params![error_message.trim(), now, existing.id],
+    )?;
+
+    get_calendar_source_by_id(conn, &existing.id)?
+        .ok_or_else(|| DbError::NotFound(format!("Source ICS '{}' introuvable", existing.id)))
+}
+
+fn fetch_http_plain_tcp(url: &str, timeout: Duration) -> Result<String, String> {
+    let without_scheme = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("HTTP://"))
+        .ok_or_else(|| "Schéma non http://".to_string())?;
+
+    let (host_port, path) = match without_scheme.find('/') {
+        Some(idx) => (&without_scheme[..idx], &without_scheme[idx..]),
+        None => (without_scheme, "/"),
+    };
+
+    let addr_str = if host_port.contains(':') {
+        host_port.to_string()
+    } else {
+        format!("{}:80", host_port)
+    };
+
+    let mut addrs = addr_str
+        .to_socket_addrs()
+        .map_err(|e| format!("Résolution DNS impossible pour '{}' : {}", host_port, e))?;
+    let socket_addr = addrs
+        .next()
+        .ok_or_else(|| format!("Aucune adresse IP trouvée pour '{}'", host_port))?;
+
+    let mut stream = TcpStream::connect_timeout(&socket_addr, timeout)
+        .map_err(|e| format!("Connexion refusée ou hors délai vers '{}' : {}", host_port, e))?;
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
+
+    let request = format!(
+        "GET {} HTTP/1.0\r\nHost: {}\r\nUser-Agent: ProductivityDashboard/0.1\r\nAccept: text/calendar, text/plain, */*\r\nConnection: close\r\n\r\n",
+        path, host_port
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|e| format!("Erreur d'envoi HTTP : {}", e))?;
+
+    let mut response_bytes = Vec::new();
+    stream
+        .read_to_end(&mut response_bytes)
+        .map_err(|e| format!("Erreur de lecture HTTP : {}", e))?;
+
+    let response_text = String::from_utf8_lossy(&response_bytes).into_owned();
+    let (headers, body) = response_text
+        .split_once("\r\n\r\n")
+        .or_else(|| response_text.split_once("\n\n"))
+        .ok_or_else(|| "Réponse HTTP malformée (en-têtes manquants)".to_string())?;
+
+    let status_line = headers.lines().next().unwrap_or("");
+    let status_code: u16 = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    if !(200..300).contains(&status_code) {
+        return Err(format!("Statut HTTP d'erreur {}", status_code));
+    }
+
+    Ok(body.to_string())
+}
+
+fn download_ics_from_url(url: &str) -> Result<String, String> {
+    let timeout = Duration::from_secs(ICS_HTTP_TIMEOUT_SECS);
+    let lower = url.to_ascii_lowercase();
+
+    if lower.starts_with("http://") {
+        if let Ok(body) = fetch_http_plain_tcp(url, timeout) {
+            return Ok(body);
+        }
+    }
+
+    let timeout_arg = ICS_HTTP_TIMEOUT_SECS.to_string();
+    let output = std::process::Command::new("curl")
+        .args([
+            "-fsSL",
+            "--max-time",
+            &timeout_arg,
+            "--connect-timeout",
+            &timeout_arg,
+            url,
+        ])
+        .output()
+        .map_err(|e| format!("Impossible de télécharger le flux ICS : {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            format!(
+                "Échec du téléchargement ICS (code de sortie : {:?})",
+                output.status.code()
+            )
+        } else {
+            format!("Échec du téléchargement ICS : {}", stderr)
+        });
+    }
+
+    let content = String::from_utf8_lossy(&output.stdout).into_owned();
+    if content.trim().is_empty() {
+        return Err("Le flux ICS téléchargé est vide.".to_string());
+    }
+
+    Ok(content)
+}
+
+/// Lit le fichier ICS local ou télécharge le flux ICS distant depuis l'URL stockée dans le trousseau [AGD-1, PRV-3].
+/// En cas d'erreur de lecture ou de réseau, met à jour `last_error` sur `calendar_sources`
+/// et conserve intacts tous les événements existants dans `calendar_events` [AGD-5].
+pub fn fetch_calendar_source_ics(conn: &Connection, id: &str) -> Result<String, DbError> {
+    let source = get_calendar_source_by_id(conn, id)?
+        .ok_or_else(|| DbError::NotFound(format!("Source ICS '{}' introuvable", id)))?;
+
+    let fetch_result: Result<String, String> = if source.source_type == "file" {
+        fs::read_to_string(&source.location_or_keychain_ref).map_err(|e| {
+            format!(
+                "Impossible de lire le fichier ICS '{}' : {}",
+                source.location_or_keychain_ref, e
+            )
+        })
+    } else {
+        let keychain = KeychainStore::for_connection(conn);
+        match keychain.get_secret(&source.location_or_keychain_ref) {
+            Ok(Some(secret_url)) => download_ics_from_url(&secret_url),
+            Ok(None) => Err(
+                "URL ICS introuvable dans le trousseau système [PRV-3].".to_string(),
+            ),
+            Err(e) => Err(format!("Erreur d'accès au trousseau système : {}", e)),
+        }
+    };
+
+    match fetch_result {
+        Ok(ics_content) => Ok(ics_content),
+        Err(err_msg) => {
+            let _ = record_calendar_source_error(conn, &source.id, &err_msg);
+            Err(DbError::Network(err_msg))
+        }
+    }
+}
+
+/// Remplace de manière atomique les événements de `source_id` par la nouvelle liste d'événements parsés,
+/// met à jour `last_synced_at = now` et `last_error = NULL` sur `calendar_sources` [AGD-1, AGD-5].
+pub fn save_calendar_events_for_source(
+    conn: &Connection,
+    source_id: &str,
+    events: Vec<CalendarEventInput>,
+) -> Result<Vec<CalendarEvent>, DbError> {
+    let existing_source = get_calendar_source_by_id(conn, source_id)?
+        .ok_or_else(|| DbError::NotFound(format!("Source ICS '{}' introuvable", source_id)))?;
+
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
+        "DELETE FROM calendar_events WHERE source_id = ?1",
+        params![existing_source.id],
+    )?;
+
+    for item in events {
+        let event_id = item
+            .id
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| format!("evt-{}", Uuid::new_v4()));
+        let ics_uid = item.ics_uid.trim().to_string();
+        if ics_uid.is_empty() {
+            return Err(DbError::Validation(
+                "L'identifiant UID ICS de l'événement est obligatoire.".to_string(),
+            ));
+        }
+        let title = {
+            let trimmed = item.title.trim();
+            if trimmed.is_empty() {
+                "(Sans titre)".to_string()
+            } else {
+                trimmed.to_string()
+            }
+        };
+        let start_at = item.start_at.trim().to_string();
+        let end_at = item.end_at.trim().to_string();
+        if start_at.is_empty() || end_at.is_empty() {
+            return Err(DbError::Validation(
+                "Les dates de début et de fin de l'événement sont obligatoires.".to_string(),
+            ));
+        }
+
+        let is_all_day_int = if item.is_all_day { 1 } else { 0 };
+        let location = item.location.unwrap_or_default();
+        let notes = item.notes.unwrap_or_default();
+        let rrule = item.rrule.filter(|r| !r.trim().is_empty());
+        let exdates_json = if let Some(raw_json) = item.exdates_json.filter(|s| !s.trim().is_empty())
+        {
+            raw_json
+        } else if let Some(exdates_vec) = item.exdates {
+            serde_json::to_string(&exdates_vec)?
+        } else {
+            "[]".to_string()
+        };
+
+        tx.execute(
+            "INSERT INTO calendar_events (
+                id, source_id, ics_uid, title, start_at, end_at, is_all_day,
+                location, notes, rrule, exdates_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                event_id,
+                existing_source.id,
+                ics_uid,
+                title,
+                start_at,
+                end_at,
+                is_all_day_int,
+                location,
+                notes,
+                rrule,
+                exdates_json
+            ],
+        )?;
+    }
+
+    let now = now_utc_iso();
+    tx.execute(
+        "UPDATE calendar_sources
+         SET last_synced_at = ?1,
+             last_error = NULL,
+             updated_at = ?1
+         WHERE id = ?2",
+        params![now, existing_source.id],
+    )?;
+
+    tx.commit()?;
+    list_calendar_events(conn, Some(&existing_source.id))
+}
+
+pub fn list_calendar_events(
+    conn: &Connection,
+    source_id: Option<&str>,
+) -> Result<Vec<CalendarEvent>, DbError> {
+    if let Some(sid) = source_id.map(str::trim).filter(|s| !s.is_empty()) {
+        let mut stmt = conn.prepare(
+            "SELECT id, source_id, ics_uid, title, start_at, end_at, is_all_day, location, notes, rrule, exdates_json
+             FROM calendar_events
+             WHERE source_id = ?1
+             ORDER BY start_at ASC, id ASC",
+        )?;
+        let rows = stmt
+            .query_map(params![sid], map_calendar_event_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT id, source_id, ics_uid, title, start_at, end_at, is_all_day, location, notes, rrule, exdates_json
+             FROM calendar_events
+             ORDER BY start_at ASC, id ASC",
+        )?;
+        let rows = stmt
+            .query_map([], map_calendar_event_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+}
+
+// ============================================================================
 // Sauvegarde automatique en ligne SQLite, Rotation 7j/4sem & Export JSON [BKP-1, BKP-2, BKP-3]
 // ============================================================================
 
@@ -2276,5 +3257,227 @@ mod tests {
         assert_eq!(past_uncompleted.len(), 1);
         assert_eq!(past_uncompleted[0].task_id, t_uncompleted.id);
         assert_eq!(past_uncompleted[0].focus_day, "2026-11-01");
+    }
+
+    #[test]
+    fn test_prv3_calendar_source_url_keychain_isolation_and_export_safety() {
+        let tmp_dir = TempDir::new().expect("création dossier temporaire");
+        let db_path = tmp_dir.path().join("dashboard.db");
+        let (conn, _) = initialize_database(&db_path).expect("init db");
+
+        let secret_url = "https://calendar.example.org/private/secret-token-998877/basic.ics";
+        let webcal_url = "webcal://calendar.example.org/private/webcal-token-112233/feed.ics";
+
+        // 1. Créer une source URL (doit stocker uniquement keychain:ics_url:<id> dans SQLite [PRV-3])
+        let src = create_calendar_source(
+            &conn,
+            CreateCalendarSourceInput {
+                name: "Emploi du temps Master".to_string(),
+                source_type: "url".to_string(),
+                location: secret_url.to_string(),
+                refresh_interval_minutes: Some(15),
+                raw_ics_content: None,
+            },
+        )
+        .expect("création source URL");
+
+        let expected_ref = format!("keychain:ics_url:{}", src.id);
+        assert_eq!(src.location_or_keychain_ref, expected_ref);
+        assert_eq!(src.refresh_interval_minutes, 15);
+        assert!(!src.location_or_keychain_ref.contains("secret-token-998877"));
+
+        // 2. Vérifier que SQLite brut ne contient jamais l'URL secrète
+        let raw_db_location: String = conn
+            .query_row(
+                "SELECT location_or_keychain_ref FROM calendar_sources WHERE id = ?1",
+                params![src.id],
+                |r| r.get(0),
+            )
+            .expect("lecture directe SQLite");
+        assert_eq!(raw_db_location, expected_ref);
+
+        // 3. Vérifier que l'export JSON complet ne contient JAMAIS l'URL secrète en clair [PRV-3]
+        let exported_json =
+            export_full_database_pretty_json(&conn).expect("export JSON complet");
+        assert!(
+            !exported_json.contains("secret-token-998877"),
+            "L'export JSON non chiffré ne doit jamais contenir l'URL ICS privée [PRV-3]"
+        );
+        assert!(exported_json.contains(&expected_ref));
+
+        // 4. Vérifier que le KeychainStore restitue bien l'URL secrète hors de SQLite
+        let keychain = KeychainStore::for_connection(&conn);
+        let stored_secret = keychain
+            .get_secret(&expected_ref)
+            .expect("lecture trousseau")
+            .expect("secret présent dans le trousseau");
+        assert_eq!(stored_secret, secret_url);
+
+        // 5. Tester la conversion webcal:// -> https:// lors d'une mise à jour
+        let updated_src = update_calendar_source(
+            &conn,
+            UpdateCalendarSourceInput {
+                id: src.id.clone(),
+                name: Some("Master Informatique".to_string()),
+                location: Some(webcal_url.to_string()),
+                refresh_interval_minutes: Some(10),
+                raw_ics_content: None,
+            },
+        )
+        .expect("mise à jour source URL");
+        assert_eq!(updated_src.name, "Master Informatique");
+        assert_eq!(updated_src.refresh_interval_minutes, 10);
+        assert_eq!(updated_src.location_or_keychain_ref, expected_ref);
+
+        let updated_secret = keychain
+            .get_secret(&expected_ref)
+            .expect("lecture trousseau après update")
+            .expect("secret présent");
+        assert_eq!(
+            updated_secret,
+            "https://calendar.example.org/private/webcal-token-112233/feed.ics"
+        );
+
+        // 6. Vérifier le rejet d'un intervalle < 5 min ou d'une URL dans une source 'file'
+        assert!(create_calendar_source(
+            &conn,
+            CreateCalendarSourceInput {
+                name: "Invalide".to_string(),
+                source_type: "url".to_string(),
+                location: secret_url.to_string(),
+                refresh_interval_minutes: Some(2),
+                raw_ics_content: None,
+            }
+        )
+        .is_err());
+
+        assert!(create_calendar_source(
+            &conn,
+            CreateCalendarSourceInput {
+                name: "Faux fichier".to_string(),
+                source_type: "file".to_string(),
+                location: secret_url.to_string(),
+                refresh_interval_minutes: Some(30),
+                raw_ics_content: None,
+            }
+        )
+        .is_err());
+
+        // 7. La suppression de la source nettoie le trousseau [PRV-3]
+        delete_calendar_source(&conn, &src.id).expect("suppression source URL");
+        assert!(keychain
+            .get_secret(&expected_ref)
+            .expect("lecture trousseau après delete")
+            .is_none());
+        assert!(list_calendar_sources(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_agd1_and_agd5_sync_events_and_preserve_cache_on_error() {
+        let tmp_dir = TempDir::new().expect("création dossier temporaire");
+        let db_path = tmp_dir.path().join("dashboard.db");
+        let (conn, _) = initialize_database(&db_path).expect("init db");
+
+        let sample_ics = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:evt-101\r\nSUMMARY:Cours Algorithmique\r\nDTSTART:20261106T080000Z\r\nDTEND:20261106T100000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+        // 1. Créer une source fichier avec contenu ICS direct (sauvegardé dans ics_sources/<id>.ics)
+        let src = create_calendar_source(
+            &conn,
+            CreateCalendarSourceInput {
+                name: "Planning Local".to_string(),
+                source_type: "file".to_string(),
+                location: "planning.ics".to_string(),
+                refresh_interval_minutes: Some(30),
+                raw_ics_content: Some(sample_ics.to_string()),
+            },
+        )
+        .expect("création source fichier ICS");
+
+        let fetched_ics =
+            fetch_calendar_source_ics(&conn, &src.id).expect("lecture du fichier ICS");
+        assert!(fetched_ics.contains("UID:evt-101"));
+
+        // 2. Sauvegarder les événements parsés (transaction atomique) [AGD-1]
+        let saved_events = save_calendar_events_for_source(
+            &conn,
+            &src.id,
+            vec![
+                CalendarEventInput {
+                    id: None,
+                    ics_uid: "evt-101".to_string(),
+                    title: "Cours Algorithmique".to_string(),
+                    start_at: "2026-11-06T08:00:00Z".to_string(),
+                    end_at: "2026-11-06T10:00:00Z".to_string(),
+                    is_all_day: false,
+                    location: Some("Amphi Turing".to_string()),
+                    notes: Some("Apporter ordinateur".to_string()),
+                    rrule: Some("FREQ=WEEKLY;COUNT=10".to_string()),
+                    exdates_json: None,
+                    exdates: Some(vec!["2026-11-13T08:00:00Z".to_string()]),
+                },
+                CalendarEventInput {
+                    id: None,
+                    ics_uid: "evt-102".to_string(),
+                    title: "Journée Portes Ouvertes".to_string(),
+                    start_at: "2026-11-07".to_string(),
+                    end_at: "2026-11-07".to_string(),
+                    is_all_day: true,
+                    location: None,
+                    notes: None,
+                    rrule: None,
+                    exdates_json: Some("[]".to_string()),
+                    exdates: None,
+                },
+            ],
+        )
+        .expect("sauvegarde des événements");
+
+        assert_eq!(saved_events.len(), 2);
+        assert_eq!(saved_events[0].title, "Cours Algorithmique");
+        assert_eq!(saved_events[0].rrule.as_deref(), Some("FREQ=WEEKLY;COUNT=10"));
+        assert_eq!(saved_events[0].exdates_json, "[\"2026-11-13T08:00:00Z\"]");
+        assert!(saved_events[1].is_all_day);
+
+        let updated_src = get_calendar_source_by_id(&conn, &src.id)
+            .unwrap()
+            .unwrap();
+        assert!(updated_src.last_synced_at.is_some());
+        assert!(updated_src.last_error.is_none());
+
+        // 3. Simuler une erreur de synchronisation via record_calendar_source_error [AGD-5]
+        let src_after_err =
+            record_calendar_source_error(&conn, &src.id, "Coupure réseau temporaire")
+                .expect("enregistrement erreur");
+        assert_eq!(
+            src_after_err.last_error.as_deref(),
+            Some("Coupure réseau temporaire")
+        );
+        assert!(src_after_err.last_synced_at.is_some());
+
+        // Les événements en cache DOIVENT être intacts [AGD-5]
+        let cached_events = list_calendar_events(&conn, Some(&src.id)).expect("lecture cache");
+        assert_eq!(
+            cached_events.len(),
+            2,
+            "Une erreur de synchronisation ne doit jamais effacer les événements en cache [AGD-5]"
+        );
+
+        // 4. Simuler un échec réel de fetch_calendar_source_ics (fichier supprimé sur disque) [AGD-5]
+        fs::remove_file(&src.location_or_keychain_ref).expect("suppression fichier ICS pour test");
+        let fetch_err = fetch_calendar_source_ics(&conn, &src.id);
+        assert!(fetch_err.is_err());
+
+        let src_after_fetch_fail = get_calendar_source_by_id(&conn, &src.id)
+            .unwrap()
+            .unwrap();
+        assert!(src_after_fetch_fail.last_error.is_some());
+
+        let cached_after_fetch_fail =
+            list_calendar_events(&conn, Some(&src.id)).expect("lecture cache après échec fetch");
+        assert_eq!(
+            cached_after_fetch_fail.len(),
+            2,
+            "L'échec de fetch_calendar_source_ics doit préserver les événements existants [AGD-5]"
+        );
     }
 }

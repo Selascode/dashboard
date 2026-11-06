@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  BROWSER_KEYCHAIN_KEY,
   EXPORT_FORMAT_V1,
   addFocusItem,
   completeTask,
+  createCalendarSource,
   createCategory,
   createTask,
+  deleteCalendarSource,
   deleteCategory,
   deleteTask,
   exportFullJson,
+  fetchCalendarSourceIcs,
   getAppSettings,
+  getBrowserKeychainSecret,
   getCategories,
   getDbStatus,
   getSetting,
@@ -16,19 +21,24 @@ import {
   getSettings,
   get_setting,
   listBackups,
+  listCalendarEvents,
+  listCalendarSources,
   listFocusItems,
   listTasks,
   listUncompletedPastFocusItems,
+  recordCalendarSourceError,
   removeFocusItem,
   reorderFocusItems,
   resetMemoryFallbackStore,
   restoreTask,
+  saveCalendarEventsForSource,
   seedDemoData,
   setBackupDir,
   setSetting,
   setSettingValue,
   set_setting,
   triggerBackup,
+  updateCalendarSource,
   updateCategory,
   updateTask,
 } from '../db';
@@ -264,5 +274,123 @@ describe('Couche d’accès aux données unique (src/lib/db.ts)', () => {
     expect(parsed.tasks).toHaveLength(1);
     expect(Array.isArray(parsed.focus_items)).toBe(true);
     expect(Array.isArray(parsed.settings)).toBe(true);
+  });
+
+  it('stocke uniquement keychain:ics_url:<id> pour les sources ICS URL et n’expose jamais l’URL secrète dans SQLite ni dans exportFullJson [PRV-3, AGD-1]', async () => {
+    const secretUrl =
+      'https://calendar.google.com/calendar/ical/secret-token-xyz123/basic.ics';
+    const webcalUrl =
+      'webcal://calendar.google.com/calendar/ical/webcal-token-abc987/basic.ics';
+
+    const source = await createCalendarSource({
+      name: 'Agenda Université',
+      source_type: 'url',
+      location: secretUrl,
+      refresh_interval_minutes: 15,
+    });
+
+    const expectedRef = `keychain:ics_url:${source.id}`;
+    expect(source.location_or_keychain_ref).toBe(expectedRef);
+    expect(source.location_or_keychain_ref).not.toContain('secret-token-xyz123');
+    expect(getBrowserKeychainSecret(expectedRef)).toBe(secretUrl);
+
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const dbSnapshotRaw =
+        window.localStorage.getItem('focus_browser_db_v2') ?? '';
+      expect(dbSnapshotRaw).not.toContain('secret-token-xyz123');
+      expect(dbSnapshotRaw).toContain(expectedRef);
+
+      const keychainRaw =
+        window.localStorage.getItem(BROWSER_KEYCHAIN_KEY) ?? '';
+      expect(keychainRaw).toContain('secret-token-xyz123');
+    }
+
+    const exportedJson = await exportFullJson();
+    expect(exportedJson).not.toContain('secret-token-xyz123');
+    expect(exportedJson).toContain(expectedRef);
+
+    // Mise à jour avec conversion webcal:// -> https://
+    const updated = await updateCalendarSource({
+      id: source.id,
+      name: 'Agenda Master 2',
+      location: webcalUrl,
+      refresh_interval_minutes: 10,
+    });
+    expect(updated.name).toBe('Agenda Master 2');
+    expect(updated.refresh_interval_minutes).toBe(10);
+    expect(updated.location_or_keychain_ref).toBe(expectedRef);
+    expect(getBrowserKeychainSecret(expectedRef)).toBe(
+      'https://calendar.google.com/calendar/ical/webcal-token-abc987/basic.ics',
+    );
+
+    // Suppression de la source et nettoyage du trousseau
+    await deleteCalendarSource(source.id);
+    expect(getBrowserKeychainSecret(expectedRef)).toBeNull();
+    expect(await listCalendarSources()).toHaveLength(0);
+  });
+
+  it('synchronise les événements ICS dans calendar_events et préserve le cache local en cas d’erreur réseau ou fichier [AGD-1, AGD-5]', async () => {
+    const rawIcs =
+      'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:evt-900\r\nSUMMARY:Soutenance Projet\r\nDTSTART:20261106T140000Z\r\nDTEND:20261106T153000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n';
+
+    const fileSource = await createCalendarSource({
+      name: 'Calendrier Local',
+      source_type: 'file',
+      location: 'mon-planning.ics',
+      raw_ics_content: rawIcs,
+    });
+
+    const fetchedContent = await fetchCalendarSourceIcs(fileSource.id);
+    expect(fetchedContent).toContain('UID:evt-900');
+
+    const savedEvents = await saveCalendarEventsForSource(fileSource.id, [
+      {
+        ics_uid: 'evt-900',
+        title: 'Soutenance Projet',
+        start_at: '2026-11-06T14:00:00Z',
+        end_at: '2026-11-06T15:30:00Z',
+        is_all_day: false,
+        location: 'Salle B204',
+        notes: 'Apporter adaptateur HDMI',
+        rrule: null,
+        exdates: [],
+      },
+      {
+        ics_uid: 'evt-901',
+        title: 'Férié',
+        start_at: '2026-11-11',
+        end_at: '2026-11-11',
+        is_all_day: true,
+      },
+    ]);
+
+    expect(savedEvents).toHaveLength(2);
+    const sourcesAfterSync = await listCalendarSources();
+    expect(sourcesAfterSync[0].last_synced_at).toBeTruthy();
+    expect(sourcesAfterSync[0].last_error).toBeNull();
+
+    // Enregistrer une erreur de synchronisation : les événements en cache doivent rester intacts [AGD-5]
+    const erroredSource = await recordCalendarSourceError(
+      fileSource.id,
+      'Serveur ICS injoignable (timeout 15s)',
+    );
+    expect(erroredSource.last_error).toBe(
+      'Serveur ICS injoignable (timeout 15s)',
+    );
+    expect(erroredSource.last_synced_at).toBeTruthy();
+
+    const cachedEvents = await listCalendarEvents(fileSource.id);
+    expect(cachedEvents).toHaveLength(2);
+    expect(cachedEvents[0].title).toBe('Soutenance Projet');
+
+    // Simuler un échec réel de fetchCalendarSourceIcs (fichier pointant vers un chemin inexistant)
+    await updateCalendarSource({
+      id: fileSource.id,
+      location: '/chemin/inexistant.ics',
+    });
+    await expect(fetchCalendarSourceIcs(fileSource.id)).rejects.toThrow();
+
+    const cachedAfterFetchFail = await listCalendarEvents(fileSource.id);
+    expect(cachedAfterFetchFail).toHaveLength(2);
   });
 });

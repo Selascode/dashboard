@@ -1,30 +1,46 @@
 import React, { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   Calendar,
   Database,
   Download,
   FolderOpen,
   HardDriveDownload,
+  Lock,
   Monitor,
   Moon,
   Palette,
+  Plus,
+  RefreshCw,
   Sun,
+  Trash2,
+  Upload,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import {
   BackupFileInfo,
+  CalendarSourceRecord,
+  CalendarSourceType,
   DateFormat,
   DbStatus,
+  createCalendarSource,
+  deleteCalendarSource,
   exportFullJson,
   getCategories,
   getDbStatus,
   getSettingValue,
   listBackups,
+  listCalendarSources,
+  saveCalendarEventsForSource,
   setBackupDir,
   ThemeMode,
   triggerBackup,
 } from '../lib/db';
-import { useTranslations } from '../i18n';
+import {
+  parseIcsFeed,
+  syncCalendarSourceById,
+} from '../lib/calendar-engine';
+import { formatTranslation, useTranslations } from '../i18n';
 
 export const SettingsPage: React.FC = () => {
   const t = useTranslations();
@@ -51,6 +67,18 @@ export const SettingsPage: React.FC = () => {
   const [exportedJsonPreview, setExportedJsonPreview] = useState<string | null>(
     null,
   );
+  const [calendarSources, setCalendarSources] = useState<CalendarSourceRecord[]>(
+    [],
+  );
+  const [icsSourceName, setIcsSourceName] = useState<string>('');
+  const [icsSourceType, setIcsSourceType] = useState<CalendarSourceType>('file');
+  const [icsSourceLocation, setIcsSourceLocation] = useState<string>('');
+  const [icsRawContent, setIcsRawContent] = useState<string>('');
+  const [icsRefreshInterval, setIcsRefreshInterval] = useState<number>(30);
+  const [icsFeedbackMessage, setIcsFeedbackMessage] = useState<string | null>(
+    null,
+  );
+  const [icsErrorMessage, setIcsErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     setNameInput(userName);
@@ -63,14 +91,24 @@ export const SettingsPage: React.FC = () => {
       getCategories(),
       getSettingValue<string>('backup_dir', ''),
       listBackups(),
+      listCalendarSources(),
     ])
-      .then(([status, categories, currentBackupDir, currentBackups]) => {
-        if (!mounted) return;
-        setDbStatus(status);
-        setCategoryCount(categories.length);
-        setBackupDirInput(currentBackupDir);
-        setBackupFiles(currentBackups);
-      })
+      .then(
+        ([
+          status,
+          categories,
+          currentBackupDir,
+          currentBackups,
+          loadedSources,
+        ]) => {
+          if (!mounted) return;
+          setDbStatus(status);
+          setCategoryCount(categories.length);
+          setBackupDirInput(currentBackupDir);
+          setBackupFiles(currentBackups);
+          setCalendarSources(loadedSources);
+        },
+      )
       .catch(() => {
         if (!mounted) return;
       });
@@ -78,6 +116,98 @@ export const SettingsPage: React.FC = () => {
       mounted = false;
     };
   }, []);
+
+  const handleIcsFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      return;
+    }
+    setIcsSourceLocation(file.name);
+    if (!icsSourceName.trim()) {
+      setIcsSourceName(file.name.replace(/\.ics$/i, ''));
+    }
+
+    if (typeof file.text === 'function') {
+      file
+        .text()
+        .then((content) => {
+          setIcsRawContent(content);
+        })
+        .catch(() => {
+          // ignore
+        });
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setIcsRawContent(reader.result);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleAddCalendarSource = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIcsErrorMessage(null);
+    setIcsFeedbackMessage(null);
+
+    try {
+      const interval = Math.max(5, Number(icsRefreshInterval) || 30);
+      const created = await createCalendarSource({
+        name: icsSourceName,
+        source_type: icsSourceType,
+        location: icsSourceLocation,
+        refresh_interval_minutes: interval,
+        raw_ics_content:
+          icsSourceType === 'file' && icsRawContent.trim()
+            ? icsRawContent
+            : undefined,
+      });
+
+      if (icsSourceType === 'file' && icsRawContent.trim()) {
+        try {
+          const parsed = parseIcsFeed(icsRawContent);
+          await saveCalendarEventsForSource(created.id, parsed);
+        } catch {
+          await syncCalendarSourceById(created.id);
+        }
+      } else {
+        await syncCalendarSourceById(created.id);
+      }
+
+      const refreshedSources = await listCalendarSources();
+      setCalendarSources(refreshedSources);
+      setIcsSourceName('');
+      setIcsSourceLocation('');
+      setIcsRawContent('');
+      setIcsRefreshInterval(30);
+      setIcsFeedbackMessage(t.settings.calendarSources.addedSuccessFeedback);
+    } catch (err) {
+      setIcsErrorMessage(
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+  };
+
+  const handleSyncCalendarSource = async (sourceId: string) => {
+    setIcsErrorMessage(null);
+    setIcsFeedbackMessage(null);
+    await syncCalendarSourceById(sourceId);
+    const refreshed = await listCalendarSources();
+    setCalendarSources(refreshed);
+    setIcsFeedbackMessage(t.settings.calendarSources.syncedSuccessFeedback);
+  };
+
+  const handleDeleteCalendarSource = async (sourceId: string) => {
+    setIcsErrorMessage(null);
+    setIcsFeedbackMessage(null);
+    await deleteCalendarSource(sourceId);
+    const refreshed = await listCalendarSources();
+    setCalendarSources(refreshed);
+    setIcsFeedbackMessage(t.settings.calendarSources.deletedSuccessFeedback);
+  };
 
   const handleSaveBackupDir = async () => {
     const saved = await setBackupDir(backupDirInput);
@@ -356,6 +486,305 @@ export const SettingsPage: React.FC = () => {
               </button>
             );
           })}
+        </div>
+      </section>
+
+      {/* Sources d'agenda ICS (AGD-1, PRV-3, AGD-5) */}
+      <section
+        aria-labelledby="calendar-sources-heading"
+        data-testid="settings-calendar-sources-section"
+        className="rounded-3xl border border-subtle bg-surface p-6 flex flex-col gap-5"
+      >
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <Calendar className="h-4 w-4 text-primary" aria-hidden="true" />
+            <h2
+              id="calendar-sources-heading"
+              className="text-base font-display font-bold text-primary"
+            >
+              {t.settings.calendarSources.title}
+            </h2>
+          </div>
+          <p className="text-sm text-secondary">
+            {t.settings.calendarSources.description}
+          </p>
+        </div>
+
+        <form
+          onSubmit={(e) => {
+            void handleAddCalendarSource(e);
+          }}
+          className="flex flex-col gap-4 rounded-2xl border border-subtle bg-surface-muted p-4"
+        >
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1.5">
+              <label
+                htmlFor="settings-ics-source-name"
+                className="text-xs font-semibold text-secondary"
+              >
+                {t.settings.calendarSources.nameLabel}
+              </label>
+              <input
+                id="settings-ics-source-name"
+                type="text"
+                data-testid="settings-ics-name-input"
+                value={icsSourceName}
+                placeholder={t.settings.calendarSources.namePlaceholder}
+                onChange={(e) => setIcsSourceName(e.target.value)}
+                className="rounded-full border border-subtle bg-surface px-4 py-2 text-xs text-primary placeholder:text-muted"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-semibold text-secondary">
+                {t.settings.calendarSources.typeLabel}
+              </span>
+              <div className="inline-flex rounded-full border border-subtle bg-surface p-1 self-start">
+                <button
+                  type="button"
+                  data-testid="settings-ics-type-file"
+                  aria-pressed={icsSourceType === 'file'}
+                  onClick={() => setIcsSourceType('file')}
+                  className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+                    icsSourceType === 'file'
+                      ? 'bg-accent-primary text-accent-foreground'
+                      : 'text-secondary hover:bg-surface-muted'
+                  }`}
+                >
+                  {t.settings.calendarSources.typeFile}
+                </button>
+                <button
+                  type="button"
+                  data-testid="settings-ics-type-url"
+                  aria-pressed={icsSourceType === 'url'}
+                  onClick={() => setIcsSourceType('url')}
+                  className={`rounded-full px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+                    icsSourceType === 'url'
+                      ? 'bg-accent-primary text-accent-foreground'
+                      : 'text-secondary hover:bg-surface-muted'
+                  }`}
+                >
+                  {t.settings.calendarSources.typeUrl}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {icsSourceType === 'file' ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="settings-ics-file-input"
+                  className="text-xs font-semibold text-secondary flex items-center gap-1.5"
+                >
+                  <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+                  <span>{t.settings.calendarSources.fileUploadLabel}</span>
+                </label>
+                <input
+                  id="settings-ics-file-input"
+                  type="file"
+                  accept=".ics,text/calendar"
+                  data-testid="settings-ics-file-input"
+                  onChange={handleIcsFileUpload}
+                  className="rounded-full border border-subtle bg-surface px-3 py-1.5 text-xs text-primary"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="settings-ics-location-file"
+                  className="text-xs font-semibold text-secondary"
+                >
+                  {t.settings.calendarSources.filePathLabel}
+                </label>
+                <input
+                  id="settings-ics-location-file"
+                  type="text"
+                  data-testid="settings-ics-location-input"
+                  value={icsSourceLocation}
+                  placeholder={t.settings.calendarSources.filePathPlaceholder}
+                  onChange={(e) => setIcsSourceLocation(e.target.value)}
+                  className="rounded-full border border-subtle bg-surface px-4 py-2 text-xs text-primary placeholder:text-muted font-mono"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 items-start">
+              <div className="sm:col-span-2 flex flex-col gap-1.5">
+                <label
+                  htmlFor="settings-ics-location-url"
+                  className="text-xs font-semibold text-secondary"
+                >
+                  {t.settings.calendarSources.urlLabel}
+                </label>
+                <input
+                  id="settings-ics-location-url"
+                  type="text"
+                  data-testid="settings-ics-location-input"
+                  value={icsSourceLocation}
+                  placeholder={t.settings.calendarSources.urlPlaceholder}
+                  onChange={(e) => setIcsSourceLocation(e.target.value)}
+                  className="rounded-full border border-subtle bg-surface px-4 py-2 text-xs text-primary placeholder:text-muted font-mono"
+                />
+                <span
+                  data-testid="settings-ics-keychain-notice"
+                  className="inline-flex items-center gap-1.5 text-[11px] font-medium text-secondary mt-0.5"
+                >
+                  <Lock className="h-3 w-3 shrink-0" aria-hidden="true" />
+                  <span>{t.settings.calendarSources.keychainNotice}</span>
+                </span>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="settings-ics-interval"
+                  className="text-xs font-semibold text-secondary"
+                >
+                  {t.settings.calendarSources.refreshIntervalLabel}
+                </label>
+                <input
+                  id="settings-ics-interval"
+                  type="number"
+                  min={5}
+                  data-testid="settings-ics-interval-input"
+                  value={icsRefreshInterval}
+                  onChange={(e) =>
+                    setIcsRefreshInterval(Number(e.target.value))
+                  }
+                  className="rounded-full border border-subtle bg-surface px-4 py-2 text-xs text-primary font-mono"
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="flex items-center justify-end">
+            <button
+              type="submit"
+              data-testid="settings-add-ics-source-btn"
+              className="inline-flex items-center gap-2 rounded-full bg-accent-primary px-5 py-2 text-xs font-semibold text-accent-foreground"
+            >
+              <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>{t.settings.calendarSources.addButton}</span>
+            </button>
+          </div>
+        </form>
+
+        {icsErrorMessage && (
+          <p
+            role="alert"
+            data-testid="settings-ics-error-msg"
+            className="text-xs font-semibold text-danger"
+          >
+            {icsErrorMessage}
+          </p>
+        )}
+
+        {icsFeedbackMessage && (
+          <p
+            role="status"
+            data-testid="settings-ics-status-msg"
+            className="text-xs font-semibold text-primary"
+          >
+            {icsFeedbackMessage}
+          </p>
+        )}
+
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-secondary mb-3">
+            {t.settings.calendarSources.configuredSourcesHeading} (
+            {calendarSources.length})
+          </h3>
+
+          {calendarSources.length === 0 ? (
+            <p
+              data-testid="settings-ics-empty"
+              className="text-xs text-secondary"
+            >
+              {t.settings.calendarSources.emptySources}
+            </p>
+          ) : (
+            <ul
+              data-testid="settings-ics-sources-list"
+              className="divide-y divide-subtle rounded-2xl border border-subtle bg-surface-muted px-4 py-2"
+            >
+              {calendarSources.map((src) => (
+                <li
+                  key={src.id}
+                  data-testid={`settings-ics-source-item-${src.id}`}
+                  className="flex flex-col gap-2 py-3 text-xs"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-semibold text-primary">
+                        {src.name}
+                      </span>
+                      <span className="rounded-full border border-subtle bg-surface px-2.5 py-0.5 text-[11px] font-medium text-secondary">
+                        {src.source_type === 'url'
+                          ? t.settings.calendarSources.typeBadgeUrl
+                          : t.settings.calendarSources.typeBadgeFile}
+                      </span>
+                      <span className="rounded-full border border-subtle bg-surface px-2.5 py-0.5 text-[11px] font-mono text-secondary">
+                        {formatTranslation(
+                          t.settings.calendarSources.intervalBadge,
+                          { minutes: src.refresh_interval_minutes },
+                        )}
+                      </span>
+                      <span className="text-[11px] text-secondary">
+                        {t.settings.calendarSources.lastSyncedLabel}{' '}
+                        {src.last_synced_at
+                          ? src.last_synced_at.slice(0, 16).replace('T', ' ')
+                          : t.settings.calendarSources.neverSynced}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        data-testid={`settings-sync-source-btn-${src.id}`}
+                        onClick={() => {
+                          void handleSyncCalendarSource(src.id);
+                        }}
+                        className="inline-flex items-center gap-1 rounded-full border border-subtle bg-surface px-3 py-1 text-xs font-semibold text-primary hover:bg-surface-muted transition-colors"
+                      >
+                        <RefreshCw className="h-3 w-3" aria-hidden="true" />
+                        <span>{t.settings.calendarSources.syncButton}</span>
+                      </button>
+                      <button
+                        type="button"
+                        data-testid={`settings-delete-source-btn-${src.id}`}
+                        onClick={() => {
+                          void handleDeleteCalendarSource(src.id);
+                        }}
+                        className="inline-flex items-center gap-1 rounded-full border border-subtle bg-surface px-3 py-1 text-xs font-semibold text-danger hover:bg-surface-muted transition-colors"
+                      >
+                        <Trash2 className="h-3 w-3" aria-hidden="true" />
+                        <span>{t.settings.calendarSources.deleteButton}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {src.last_error && (
+                    <div
+                      role="alert"
+                      data-testid={`settings-source-error-${src.id}`}
+                      className="flex flex-col gap-0.5 rounded-xl border border-danger bg-surface px-3 py-2 text-[11px] text-danger"
+                    >
+                      <div className="flex items-center gap-1.5 font-semibold">
+                        <AlertTriangle
+                          className="h-3.5 w-3.5 shrink-0"
+                          aria-hidden="true"
+                        />
+                        <span>{src.last_error}</span>
+                      </div>
+                      <span className="text-secondary">
+                        {t.settings.calendarSources.offlineCacheNotice}
+                      </span>
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </section>
 
