@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions minimales du MVP Dashboard de Productivité (PRV-4, LNC-4 : aucun accès shell)",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "opener:default",
+    "global-shortcut:default"
+  ]
+}

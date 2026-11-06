@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>focus</title>
+    <script>
+      (function () {
+        try {
+          var raw = window.localStorage && window.localStorage.getItem('focus_theme_cache_v1');
+          var parsed = raw ? JSON.parse(raw) : null;
+          var mode = (parsed && parsed.mode) || 'light';
+          var isSystemDark =
+            typeof window.matchMedia === 'function' &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches;
+          var resolved = mode === 'system' ? (isSystemDark ? 'dark' : 'light') : mode;
+          var root = document.documentElement;
+          if (resolved === 'dark') {
+            root.classList.add('dark');
+          } else {
+            root.classList.remove('dark');
+          }
+          root.setAttribute('data-theme', resolved);
+          root.setAttribute('data-theme-mode', mode);
+          if (parsed && parsed.tokens && parsed.tokens[resolved]) {
+            var map = parsed.tokens[resolved];
+            for (var key in map) {
+              if (Object.prototype.hasOwnProperty.call(map, key)) {
+                root.style.setProperty(key, map[key]);
+              }
+            }
+          }
+        } catch (_err) {
+          // Repli silencieux avant réconciliation par ThemeProvider
+        }
+      })();
+    </script>
+  </head>
+  <body class="bg-canvas text-primary font-sans antialiased">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
